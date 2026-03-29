@@ -82,6 +82,9 @@ class BridgeConfig:
     catalog_traveltime_model: str
     catalog_traveltime_timeout_sec: float
     catalog_traveltime_max_workers: int
+    match_history_enable: bool
+    match_history_window_hours: float
+    match_history_max_entries: int
 
     @classmethod
     def from_env(cls) -> BridgeConfig:
@@ -120,6 +123,9 @@ class BridgeConfig:
             catalog_traveltime_model=_env_str("SHAKE_CATALOG_TRAVELTIME_MODEL", "iasp91"),
             catalog_traveltime_timeout_sec=_env_float("SHAKE_CATALOG_TRAVELTIME_TIMEOUT_SEC", 6.0),
             catalog_traveltime_max_workers=_env_int("SHAKE_CATALOG_TRAVELTIME_MAX_WORKERS", 6),
+            match_history_enable=_env_bool("SHAKE_MATCH_HISTORY_ENABLE", True),
+            match_history_window_hours=_env_float("SHAKE_MATCH_HISTORY_WINDOW_HOURS", 24.0),
+            match_history_max_entries=_env_int("SHAKE_MATCH_HISTORY_MAX_ENTRIES", 200),
         )
 
     def validate(self) -> None:
@@ -132,6 +138,16 @@ class BridgeConfig:
         if self.shake_udp_recv_bufsize < 1:
             raise ValueError(
                 f"SHAKE_UDP_RECV_BUFSIZE must be >= 1, got {self.shake_udp_recv_bufsize}"
+            )
+        if self.match_history_window_hours <= 0:
+            raise ValueError(
+                "SHAKE_MATCH_HISTORY_WINDOW_HOURS must be > 0, "
+                f"got {self.match_history_window_hours}"
+            )
+        if self.match_history_max_entries < 1:
+            raise ValueError(
+                "SHAKE_MATCH_HISTORY_MAX_ENTRIES must be >= 1, "
+                f"got {self.match_history_max_entries}"
             )
         if self.detect_events:
             if self.detect_sta_sec <= 0:
@@ -188,3 +204,7 @@ class BridgeConfig:
     def mqtt_topic_match(self) -> str:
         """Prefix for catalog match leaf topics: ``{base}/match/<field>``."""
         return f"{self.mqtt_topic.rstrip('/')}/match"
+
+    def mqtt_topic_match_history_json(self) -> str:
+        """Retained JSON array of recent matches: ``{base}/match/history_json``."""
+        return f"{self.mqtt_topic.rstrip('/')}/match/history_json"

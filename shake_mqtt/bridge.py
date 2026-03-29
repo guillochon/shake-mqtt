@@ -16,6 +16,7 @@ from .catalog import (
 from .config import BridgeConfig
 from .mqtt_client import MqttPublisher
 from .processing import DatagramProcessor, PassthroughJsonNormalizer
+from .match_history import MatchHistoryBuffer
 from .topic_publish import publish_match_result, publish_sta_lta_event
 from .udp import Address, UdpListener
 
@@ -38,6 +39,12 @@ class ShakeMqttBridge:
             self._catalog_executor = ThreadPoolExecutor(
                 max_workers=2,
                 thread_name_prefix="catalog",
+            )
+        self._match_history: MatchHistoryBuffer | None = None
+        if config.catalog_enable and config.match_history_enable:
+            self._match_history = MatchHistoryBuffer(
+                window_hours=config.match_history_window_hours,
+                max_entries=config.match_history_max_entries,
             )
 
     def _on_datagram(self, data: bytes, addr: Address) -> None:
@@ -117,6 +124,14 @@ class ShakeMqttBridge:
             closest,
             lambda t, p: self._publish_check(t, p, addr),
         )
+        if self._match_history is not None:
+            hist_json = self._match_history.record_and_dumps(trigger, closest)
+            self._publish_check(
+                self._config.mqtt_topic_match_history_json(),
+                hist_json,
+                addr,
+                retain=True,
+            )
         if closest is not None:
             logger.info(
                 "USGS match for trigger @ %s (mode=%s)",
@@ -124,8 +139,15 @@ class ShakeMqttBridge:
                 closest.get("match_mode"),
             )
 
-    def _publish_check(self, topic: str, payload: str, addr: Address) -> None:
-        info = self._mqtt.publish(topic, payload)
+    def _publish_check(
+        self,
+        topic: str,
+        payload: str,
+        addr: Address,
+        *,
+        retain: bool = False,
+    ) -> None:
+        info = self._mqtt.publish(topic, payload, retain=retain)
         if info.rc != 0:
             logger.warning("MQTT publish queue error topic=%s rc=%s", topic, info.rc)
         if logger.isEnabledFor(logging.DEBUG):

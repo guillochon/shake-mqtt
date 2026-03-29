@@ -58,5 +58,5 @@ class MqttPublisher:
         except Exception:
             pass
 
-    def publish(self, topic: str, payload: str) -> MQTTMessageInfo:
-        return self._client.publish(topic, payload, qos=0, retain=False)
+    def publish(self, topic: str, payload: str, *, retain: bool = False) -> MQTTMessageInfo:
+        return self._client.publish(topic, payload, qos=0, retain=retain)
