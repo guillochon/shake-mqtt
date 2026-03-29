@@ -5,12 +5,18 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
-from .catalog import catalog_followup_payload, fetch_usgs_nearby_events, trigger_time_to_iso_window
+from .catalog import (
+    fetch_usgs_nearby_events,
+    pick_closest_catalog_match,
+    trigger_time_to_iso_window,
+)
 from .config import BridgeConfig
 from .mqtt_client import MqttPublisher
 from .processing import DatagramProcessor, PassthroughJsonNormalizer
+from .topic_publish import publish_match_result, publish_sta_lta_event
 from .udp import Address, UdpListener
 
 logger = logging.getLogger(__name__)
@@ -39,19 +45,40 @@ class ShakeMqttBridge:
         if result.json_payload is not None:
             self._publish_check(self._config.mqtt_topic_json(), result.json_payload, addr)
         for ev in result.event_payloads:
-            self._publish_check(self._config.mqtt_topic_event(), ev, addr)
-            self._maybe_schedule_catalog(ev)
+            try:
+                event_obj = json.loads(ev)
+            except json.JSONDecodeError:
+                continue
+            # Leaf topics under `{base}/event/` only reflect triggers so subscribers stay in sync.
+            if event_obj.get("kind") == "trigger":
+                publish_sta_lta_event(
+                    self._config.mqtt_topic_event(),
+                    event_obj,
+                    lambda t, p: self._publish_check(t, p, addr),
+                )
+            self._maybe_schedule_catalog(event_obj)
 
-    def _maybe_schedule_catalog(self, event_json: str) -> None:
+    def _maybe_schedule_catalog(self, trigger: dict) -> None:
         if self._catalog_executor is None:
-            return
-        try:
-            trigger = json.loads(event_json)
-        except json.JSONDecodeError:
             return
         if trigger.get("kind") != "trigger":
             return
-        self._catalog_executor.submit(self._run_catalog_lookup, dict(trigger))
+        trigger_copy = dict(trigger)
+        delay = self._config.catalog_delay_sec
+        if delay <= 0:
+            self._catalog_executor.submit(self._run_catalog_lookup, trigger_copy)
+        else:
+            self._catalog_executor.submit(self._run_delayed_catalog_lookup, trigger_copy, delay)
+
+    def _run_delayed_catalog_lookup(self, trigger: dict, delay: float) -> None:
+        deadline = time.monotonic() + delay
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if self._stop.wait(timeout=min(remaining, 1.0)):
+                return
+        self._run_catalog_lookup(trigger)
 
     def _run_catalog_lookup(self, trigger: dict) -> None:
         lat = self._config.catalog_latitude
@@ -66,18 +93,36 @@ class ShakeMqttBridge:
             self._config.catalog_time_before_sec,
             self._config.catalog_time_after_sec,
         )
-        matches = fetch_usgs_nearby_events(
+        candidates = fetch_usgs_nearby_events(
             start_iso,
             end_iso,
             lat,
             lon,
             self._config.catalog_max_radius_km,
         )
-        payload = catalog_followup_payload(trigger, matches)
+        closest = pick_closest_catalog_match(
+            float(t),
+            lat,
+            lon,
+            candidates,
+            use_traveltime=self._config.catalog_use_traveltime,
+            traveltime_model=self._config.catalog_traveltime_model,
+            traveltime_timeout_sec=self._config.catalog_traveltime_timeout_sec,
+            traveltime_max_workers=self._config.catalog_traveltime_max_workers,
+        )
         addr: Address = ("catalog", 0)
-        self._publish_check(self._config.mqtt_topic_event_catalog(), payload, addr)
-        if matches:
-            logger.info("Catalog: %d USGS event(s) near trigger @ %s", len(matches), t)
+        publish_match_result(
+            self._config.mqtt_topic_match(),
+            trigger,
+            closest,
+            lambda t, p: self._publish_check(t, p, addr),
+        )
+        if closest is not None:
+            logger.info(
+                "USGS match for trigger @ %s (mode=%s)",
+                t,
+                closest.get("match_mode"),
+            )
 
     def _publish_check(self, topic: str, payload: str, addr: Address) -> None:
         info = self._mqtt.publish(topic, payload)

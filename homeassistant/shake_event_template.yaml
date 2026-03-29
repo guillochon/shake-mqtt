@@ -1,0 +1,204 @@
+# Home Assistant: MQTT sensors for shake-mqtt leaf topics (see shake_mqtt/topic_publish.py).
+# Requires the MQTT integration with your broker.
+#
+# state_topic root is ``Shake`` (``Shake/event/...``, ``Shake/match/...``). Set ``MQTT_TOPIC=Shake``
+# in the bridge ``.env`` so published topics match Home Assistant.
+#
+# Merge under ``mqtt:`` in configuration.yaml or packages (see HA docs).
+
+mqtt:
+  sensor:
+    - name: "Shake kind"
+      unique_id: "shake_kind"
+      state_topic: "Shake/event/kind"
+      value_template: "{{ value }}"
+      icon: "mdi:label-outline"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake channel"
+      unique_id: "shake_channel"
+      state_topic: "Shake/event/channel"
+      value_template: "{{ value }}"
+      icon: "mdi:transmission-tower"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake time unix"
+      unique_id: "shake_time_unix"
+      state_topic: "Shake/event/time"
+      unit_of_measurement: "s"
+      state_class: measurement
+      value_template: "{{ value | float }}"
+      icon: "mdi:clock-outline"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake ratio"
+      unique_id: "shake_ratio"
+      state_topic: "Shake/event/ratio"
+      state_class: measurement
+      value_template: "{{ value | float }}"
+      icon: "mdi:chart-bell-curve"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake STA RMS"
+      unique_id: "shake_sta_rms"
+      state_topic: "Shake/event/sta_rms"
+      state_class: measurement
+      value_template: "{{ value | float }}"
+      icon: "mdi:pulse"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake LTA RMS"
+      unique_id: "shake_lta_rms"
+      state_topic: "Shake/event/lta_rms"
+      state_class: measurement
+      value_template: "{{ value | float }}"
+      icon: "mdi:pulse"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match kind"
+      unique_id: "shake_match_kind"
+      state_topic: "Shake/match/kind"
+      value_template: "{{ value }}"
+      icon: "mdi:label-outline"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match ref channel"
+      unique_id: "shake_match_ref_channel"
+      state_topic: "Shake/match/ref/channel"
+      value_template: "{{ value }}"
+      icon: "mdi:transmission-tower"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match ref trigger time"
+      unique_id: "shake_match_ref_trigger_time_unix"
+      state_topic: "Shake/match/ref/trigger_time"
+      unit_of_measurement: "s"
+      state_class: measurement
+      value_template: "{{ value | float }}"
+      icon: "mdi:clock-outline"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match catalog present"
+      unique_id: "shake_match_catalog_present"
+      state_topic: "Shake/match/catalog_present"
+      value_template: "{{ value }}"
+      icon: "mdi:database-check-outline"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match magnitude"
+      unique_id: "shake_match_magnitude"
+      state_topic: "Shake/match/magnitude"
+      state_class: measurement
+      value_template: "{% if value | default('', true) | length > 0 %}{{ value | float }}{% else %}{{ none }}{% endif %}"
+      icon: "mdi:chart-bell-curve"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match place"
+      unique_id: "shake_match_place"
+      state_topic: "Shake/match/place"
+      value_template: "{% if value | default('', true) | length > 0 %}{{ value }}{% else %}{{ none }}{% endif %}"
+      icon: "mdi:map-marker"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match event time"
+      unique_id: "shake_match_event_time_ms"
+      state_topic: "Shake/match/event_time_ms"
+      unit_of_measurement: "ms"
+      state_class: measurement
+      value_template: "{% if value | default('', true) | length > 0 %}{{ value | float }}{% else %}{{ none }}{% endif %}"
+      icon: "mdi:clock-outline"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match URL"
+      unique_id: "shake_match_url"
+      state_topic: "Shake/match/url"
+      value_template: "{% if value | default('', true) | length > 0 %}{{ value }}{% else %}{{ none }}{% endif %}"
+      icon: "mdi:link-variant"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match trigger STA RMS"
+      unique_id: "shake_match_trigger_sta_rms"
+      state_topic: "Shake/match/sta_rms"
+      state_class: measurement
+      value_template: "{% if value | default('', true) | length > 0 %}{{ value | float }}{% else %}{{ none }}{% endif %}"
+      icon: "mdi:pulse"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match mode"
+      unique_id: "shake_match_mode"
+      state_topic: "Shake/match/match_mode"
+      value_template: "{% if value | default('', true) | length > 0 %}{{ value }}{% else %}{{ none }}{% endif %}"
+      icon: "mdi:crosshairs-gps"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match travel time"
+      unique_id: "shake_match_travel_sec"
+      state_topic: "Shake/match/travel_sec"
+      unit_of_measurement: "s"
+      state_class: measurement
+      value_template: "{% if value | default('', true) | length > 0 %}{{ value | float }}{% else %}{{ none }}{% endif %}"
+      icon: "mdi:timer-outline"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"
+
+    - name: "Shake match predicted arrival"
+      unique_id: "shake_match_predicted_arrival_unix"
+      state_topic: "Shake/match/predicted_arrival_unix"
+      unit_of_measurement: "s"
+      state_class: measurement
+      value_template: "{% if value | default('', true) | length > 0 %}{{ value | float }}{% else %}{{ none }}{% endif %}"
+      icon: "mdi:clock-outline"
+      device:
+        identifiers:
+          - "shake"
+        name: "Shake"

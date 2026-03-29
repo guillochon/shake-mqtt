@@ -77,6 +77,11 @@ class BridgeConfig:
     catalog_max_radius_km: float
     catalog_time_before_sec: float
     catalog_time_after_sec: float
+    catalog_delay_sec: float
+    catalog_use_traveltime: bool
+    catalog_traveltime_model: str
+    catalog_traveltime_timeout_sec: float
+    catalog_traveltime_max_workers: int
 
     @classmethod
     def from_env(cls) -> BridgeConfig:
@@ -110,6 +115,11 @@ class BridgeConfig:
             catalog_max_radius_km=_env_float("SHAKE_CATALOG_MAX_RADIUS_KM", 500.0),
             catalog_time_before_sec=_env_float("SHAKE_CATALOG_TIME_BEFORE_SEC", 120.0),
             catalog_time_after_sec=_env_float("SHAKE_CATALOG_TIME_AFTER_SEC", 60.0),
+            catalog_delay_sec=_env_float("SHAKE_CATALOG_DELAY_SEC", 0.0),
+            catalog_use_traveltime=_env_bool("SHAKE_CATALOG_USE_TRAVELTIME", True),
+            catalog_traveltime_model=_env_str("SHAKE_CATALOG_TRAVELTIME_MODEL", "iasp91"),
+            catalog_traveltime_timeout_sec=_env_float("SHAKE_CATALOG_TRAVELTIME_TIMEOUT_SEC", 6.0),
+            catalog_traveltime_max_workers=_env_int("SHAKE_CATALOG_TRAVELTIME_MAX_WORKERS", 6),
         )
 
     def validate(self) -> None:
@@ -153,15 +163,28 @@ class BridgeConfig:
                 raise ValueError("SHAKE_CATALOG_LONGITUDE must be between -180 and 180")
             if self.catalog_max_radius_km <= 0:
                 raise ValueError("SHAKE_CATALOG_MAX_RADIUS_KM must be > 0")
+            if self.catalog_delay_sec < 0:
+                raise ValueError("SHAKE_CATALOG_DELAY_SEC must be >= 0")
+            if self.catalog_use_traveltime:
+                allowed_models = frozenset({"iasp91", "prem", "ak135"})
+                if self.catalog_traveltime_model not in allowed_models:
+                    raise ValueError(
+                        "SHAKE_CATALOG_TRAVELTIME_MODEL must be one of "
+                        f"{sorted(allowed_models)}, got {self.catalog_traveltime_model!r}"
+                    )
+                if self.catalog_traveltime_timeout_sec <= 0:
+                    raise ValueError("SHAKE_CATALOG_TRAVELTIME_TIMEOUT_SEC must be > 0")
+                if self.catalog_traveltime_max_workers < 1:
+                    raise ValueError("SHAKE_CATALOG_TRAVELTIME_MAX_WORKERS must be >= 1")
 
     def mqtt_topic_json(self) -> str:
         """`MQTT_TOPIC` + `/json` (canonical JSON when parse succeeds)."""
         return f"{self.mqtt_topic.rstrip('/')}/json"
 
     def mqtt_topic_event(self) -> str:
-        """Triggers and resets: `{base}/event`."""
+        """Prefix for STA/LTA leaf topics: ``{base}/event/<field>`` (not a single JSON topic)."""
         return f"{self.mqtt_topic.rstrip('/')}/event"
 
-    def mqtt_topic_event_catalog(self) -> str:
-        """USGS correlation follow-up: `{base}/event/catalog`."""
-        return f"{self.mqtt_topic.rstrip('/')}/event/catalog"
+    def mqtt_topic_match(self) -> str:
+        """Prefix for catalog match leaf topics: ``{base}/match/<field>``."""
+        return f"{self.mqtt_topic.rstrip('/')}/match"

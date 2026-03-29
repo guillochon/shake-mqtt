@@ -7,11 +7,12 @@ import logging
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-_JSON_SEPARATORS = (",", ":")
+_IRIS_TRAVELTIME_BASE = "https://service.earthscope.org/irisws/traveltime/1/query"
 
 
 def fetch_usgs_nearby_events(
@@ -66,30 +67,222 @@ def fetch_usgs_nearby_events(
         place = props.get("place")
         et = props.get("time")
         detail = props.get("url")
+        ev_lat: float | None = None
+        ev_lon: float | None = None
+        ev_depth_km: float | None = None
+        geom = f.get("geometry")
+        if isinstance(geom, dict) and geom.get("type") == "Point":
+            coords = geom.get("coordinates")
+            if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                try:
+                    ev_lon = float(coords[0])
+                    ev_lat = float(coords[1])
+                    if len(coords) >= 3:
+                        ev_depth_km = float(coords[2])
+                except (TypeError, ValueError):
+                    pass
         out.append(
             {
                 "magnitude": float(mag) if mag is not None else None,
                 "place": str(place) if place is not None else None,
                 "event_time_ms": int(et) if et is not None else None,
                 "url": str(detail) if detail is not None else None,
+                "ev_latitude": ev_lat,
+                "ev_longitude": ev_lon,
+                "ev_depth_km": ev_depth_km,
             }
         )
     return out
 
 
-def catalog_followup_payload(trigger: dict, matches: list[dict]) -> str:
-    return json.dumps(
+def pick_closest_match_by_time(trigger_time_unix: float, matches: list[dict]) -> dict | None:
+    """USGS event whose origin time is closest to the trigger (requires ``event_time_ms``)."""
+    trigger_ms = trigger_time_unix * 1000.0
+    best: dict | None = None
+    best_abs_dt_ms: float | None = None
+    for m in matches:
+        et = m.get("event_time_ms")
+        if et is None:
+            continue
+        try:
+            dt = abs(float(et) - trigger_ms)
+        except (TypeError, ValueError):
+            continue
+        if best is None or dt < best_abs_dt_ms:
+            best = m
+            best_abs_dt_ms = dt
+    return best
+
+
+def fetch_iris_first_arrival_travel_sec(
+    ev_lat: float,
+    ev_lon: float,
+    ev_depth_km: float,
+    sta_lat: float,
+    sta_lon: float,
+    *,
+    model: str = "iasp91",
+    timeout_sec: float = 8.0,
+) -> float | None:
+    """
+    First-arriving phase travel time (seconds) from hypocenter to station via
+    IRIS/EQScope traveltime web service (1-D earth model). USGS catalog does not
+    expose per-station travel times; this is the standard HTTP alternative.
+    """
+    q = urllib.parse.urlencode(
         {
-            "kind": "catalog",
-            "ref": {
-                "channel": trigger.get("channel"),
-                "trigger_time": trigger.get("time"),
-            },
-            "matches": matches,
-        },
-        separators=_JSON_SEPARATORS,
-        ensure_ascii=False,
+            "staloc": f"[{sta_lat},{sta_lon}]",
+            "evloc": f"[{ev_lat},{ev_lon}]",
+            "evdepth": str(max(0.0, ev_depth_km)),
+            "format": "json",
+            "mintimeonly": "true",
+            "model": model,
+        }
     )
+    url = f"{_IRIS_TRAVELTIME_BASE}?{q}"
+    req = urllib.request.Request(url, headers={"User-Agent": "shake-mqtt/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("IRIS traveltime HTTP %s: %s", e.code, e.reason)
+        return None
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        logger.warning("IRIS traveltime request failed: %s", e)
+        return None
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        logger.warning("IRIS traveltime response not JSON")
+        return None
+
+    arrivals = data.get("arrivals")
+    if not isinstance(arrivals, list) or not arrivals:
+        return None
+    times: list[float] = []
+    for a in arrivals:
+        if not isinstance(a, dict):
+            continue
+        t = a.get("time")
+        if t is None:
+            continue
+        try:
+            times.append(float(t))
+        except (TypeError, ValueError):
+            continue
+    if not times:
+        return None
+    return min(times)
+
+
+def _score_match_for_pick(
+    trigger_time_unix: float,
+    sta_lat: float,
+    sta_lon: float,
+    m: dict,
+    *,
+    use_traveltime: bool,
+    traveltime_model: str,
+    traveltime_timeout_sec: float,
+) -> tuple[float, dict]:
+    """Return (abs_error_seconds, enriched match row)."""
+    et = m.get("event_time_ms")
+    if et is None:
+        row = dict(m)
+        row["match_mode"] = "origin_time"
+        return (float("inf"), row)
+    try:
+        origin_unix = float(et) / 1000.0
+    except (TypeError, ValueError):
+        row = dict(m)
+        row["match_mode"] = "origin_time"
+        return (float("inf"), row)
+
+    ev_lat = m.get("ev_latitude")
+    ev_lon = m.get("ev_longitude")
+    depth = m.get("ev_depth_km")
+    dep = float(depth) if depth is not None else 0.0
+
+    if (
+        use_traveltime
+        and isinstance(ev_lat, (int, float))
+        and isinstance(ev_lon, (int, float))
+    ):
+        tt = fetch_iris_first_arrival_travel_sec(
+            float(ev_lat),
+            float(ev_lon),
+            dep,
+            sta_lat,
+            sta_lon,
+            model=traveltime_model,
+            timeout_sec=traveltime_timeout_sec,
+        )
+        if tt is not None:
+            predicted = origin_unix + tt
+            err = abs(trigger_time_unix - predicted)
+            row = dict(m)
+            row["travel_sec"] = round(tt, 4)
+            row["predicted_arrival_unix"] = round(predicted, 6)
+            row["match_mode"] = "traveltime"
+            return (err, row)
+
+    err = abs(trigger_time_unix - origin_unix)
+    row = dict(m)
+    row["match_mode"] = "origin_time"
+    return (err, row)
+
+
+def pick_closest_catalog_match(
+    trigger_time_unix: float,
+    sta_lat: float,
+    sta_lon: float,
+    matches: list[dict],
+    *,
+    use_traveltime: bool,
+    traveltime_model: str,
+    traveltime_timeout_sec: float,
+    traveltime_max_workers: int,
+) -> dict | None:
+    """
+    Choose the catalog event that best explains the trigger time at the station.
+    With travel time: minimize |trigger - (origin + first_arrival)| using IRIS.
+    Without (or when hypocenter / IRIS unavailable): same as origin-time closeness.
+    """
+    if not matches:
+        return None
+    if not use_traveltime:
+        best = pick_closest_match_by_time(trigger_time_unix, matches)
+        if best is None:
+            return None
+        row = dict(best)
+        row["match_mode"] = "origin_time"
+        return row
+
+    workers = max(1, min(traveltime_max_workers, len(matches)))
+    best_err = float("inf")
+    best_row: dict | None = None
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [
+            ex.submit(
+                _score_match_for_pick,
+                trigger_time_unix,
+                sta_lat,
+                sta_lon,
+                m,
+                use_traveltime=True,
+                traveltime_model=traveltime_model,
+                traveltime_timeout_sec=traveltime_timeout_sec,
+            )
+            for m in matches
+        ]
+        for f in as_completed(futs):
+            err, row = f.result()
+            if err < best_err:
+                best_err = err
+                best_row = row
+    return best_row
 
 
 def trigger_time_to_iso_window(
