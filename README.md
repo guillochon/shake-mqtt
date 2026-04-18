@@ -16,9 +16,11 @@ Python bridge that listens for **Raspberry Shake** UDP datagrams and publishes t
    docker compose up -d --build
    ```
 
+   Plain `docker compose up -d` does **not** rebuild the image; use `--build` (or `make up` in this repo) so Compose builds when the Dockerfile or `shake_mqtt/` changed. Docker still uses layer cache, so unchanged layers are skipped.
+
 3. Point your Shake’s UDP output at this machine’s IP and the port you set (`SHAKE_UDP_PORT`, default `8888`).
 
-Compose reads a project `.env` file for variable substitution in `docker-compose.yml`. You do not need to list it under `env_file` in the compose file.
+Compose reads the project `.env` file for interpolation in `docker-compose.yml`, and this repo also passes it to the container via `env_file` so bridge settings are available at runtime.
 
 ## Configuration
 
@@ -47,7 +49,7 @@ Compose reads a project `.env` file for variable substitution in `docker-compose
 | `SHAKE_CATALOG_LATITUDE` / `SHAKE_CATALOG_LONGITUDE` | Required when catalog is enabled (station location for radius filter and travel-time prediction) | _(unset)_ |
 | `SHAKE_CATALOG_MAX_RADIUS_KM` | USGS search radius | `500` |
 | `SHAKE_CATALOG_TIME_BEFORE_SEC` / `SHAKE_CATALOG_TIME_AFTER_SEC` | Catalog time window around trigger | `120` / `60` |
-| `SHAKE_CATALOG_DELAY_SEC` | Wait this many seconds after each trigger before the USGS query (`0` = immediate) | `0` |
+| `SHAKE_CATALOG_QUERY_OFFSETS_SEC` | Comma-separated seconds after each trigger to run a USGS query (e.g. `60,120,180` for 1, 2, and 3 minutes). Default `60,120,180` when unset. Use `0` alone for one immediate query | `60,120,180` |
 | `SHAKE_CATALOG_USE_TRAVELTIME` | Prefer events whose **predicted first arrival** (origin + model travel time) is closest to the trigger. The USGS catalog API does **not** ship per-station travel times; the bridge calls the **IRIS/EQScope traveltime** web service (1-D model: `iasp91`, `prem`, or `ak135`). Set `false` to restore origin-time-only matching | `true` |
 | `SHAKE_CATALOG_TRAVELTIME_MODEL` | Velocity model for IRIS (`iasp91` / `prem` / `ak135`) | `iasp91` |
 | `SHAKE_CATALOG_TRAVELTIME_TIMEOUT_SEC` | Per-request timeout for each IRIS lookup (candidates are queried in parallel) | `6` |
@@ -81,8 +83,8 @@ The bridge is split into small pieces so you can swap behavior without rewriting
 
 - **`DatagramProcessor`** ([shake_mqtt/processing.py](shake_mqtt/processing.py)) — `process(...) -> ProcessResult` with optional `json_payload` for **`{MQTT_TOPIC}/json`** and optional `event_payloads` (internal JSON strings) for STA/LTA. **`ShakeMqttBridge`** publishes those as **MQTT leaf topics** under **`{MQTT_TOPIC}/event/<field>`** (only for **`kind: trigger`**), not a single JSON blob on `{base}/event`. Parsing handles Raspberry Shake UDP lines like `{"CHANNEL", timestamp, sample, ...}` (UTF-8, `'` → `"`, outer `{…}` → JSON array or structured object). Invalid datagrams yield an empty result (nothing published).
 - **`build_processor(config)`** — returns **`PassthroughJsonNormalizer`** or **`EventDetectingProcessor`** (STA/LTA) based on `SHAKE_DETECT_EVENTS`. Detection uses **AC energy** (squared deviation from a slow exponential DC), so **`sta_rms` / `lta_rms`** are on a similar scale to **`packet_rms`**, not raw digitizer counts. With detection on, each **`/json`** message includes **`sta_rms`** and **`lta_rms`** (structured object keys, or two extra trailing numbers in the flat array). Changing this algorithm can shift optimal **`SHAKE_DETECT_RATIO_*`** values.
-- **`ShakeMqttBridge`** ([shake_mqtt/bridge.py](shake_mqtt/bridge.py)) — accepts an optional `processor=` argument for dependency injection; when **`SHAKE_CATALOG_ENABLE`** is set, runs USGS lookups in a background thread (optional **`SHAKE_CATALOG_DELAY_SEC`** after each trigger) and publishes **leaf topics** under **`{MQTT_TOPIC}/match/`** (see `shake_mqtt/topic_publish.py`). With travel time enabled, the chosen event minimizes the gap between the trigger time and **origin time + IRIS first-arrival travel time**; **`sta_rms`** still comes from the trigger.
-- **Match history** ([shake_mqtt/match_history.py](shake_mqtt/match_history.py)) — when catalog and **`SHAKE_MATCH_HISTORY_ENABLE`** are on, each completed lookup updates **`{MQTT_TOPIC}/match/history_json`**: retained JSON `{"matches":[...],"updated_unix":...}`. Rows match the leaf-topic semantics; **`matches`** is sorted by **`sta_rms`** (descending). Example MQTT sensor + Markdown dashboard table: [homeassistant/shake_event_template.yaml](homeassistant/shake_event_template.yaml) (comments) and the snippet below.
+- **`ShakeMqttBridge`** ([shake_mqtt/bridge.py](shake_mqtt/bridge.py)) — accepts an optional `processor=` argument for dependency injection; when **`SHAKE_CATALOG_ENABLE`** is set, schedules one USGS lookup per entry in **`SHAKE_CATALOG_QUERY_OFFSETS_SEC`** (default **1, 2, and 3 minutes** after the trigger) and publishes **leaf topics** under **`{MQTT_TOPIC}/match/`** after each attempt (see `shake_mqtt/topic_publish.py`). With travel time enabled, the chosen event minimizes the gap between the trigger time and **origin time + IRIS first-arrival travel time**; **`sta_rms`** still comes from the trigger.
+- **Match history** ([shake_mqtt/match_history.py](shake_mqtt/match_history.py)) — when catalog and **`SHAKE_MATCH_HISTORY_ENABLE`** are on, each completed lookup updates **`{MQTT_TOPIC}/match/history_json`**: retained JSON `{"matches":[...],"updated_unix":...}`. Catalog fields mirror MQTT leaf topics; **`sta_rms`** is always the trigger value (so sorts and plots work when USGS returns no row, unlike **`Shake/match/sta_rms`**, which is empty then). **`matches`** is sorted by **`sta_rms`** (descending). Example MQTT sensor + Markdown dashboard table: [homeassistant/shake_event_template.yaml](homeassistant/shake_event_template.yaml) (comments) and the snippet below.
 
 **Lovelace Markdown card (table, `sensor.shake_match_history`)** — set `entity_id` so the card refreshes when the sensor updates; adjust the entity id if your MQTT topic prefix is not `Shake`.
 

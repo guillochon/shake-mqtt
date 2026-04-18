@@ -37,7 +37,7 @@ class ShakeMqttBridge:
         self._catalog_executor: ThreadPoolExecutor | None = None
         if config.catalog_enable:
             self._catalog_executor = ThreadPoolExecutor(
-                max_workers=2,
+                max_workers=4,
                 thread_name_prefix="catalog",
             )
         self._match_history: MatchHistoryBuffer | None = None
@@ -70,12 +70,12 @@ class ShakeMqttBridge:
             return
         if trigger.get("kind") != "trigger":
             return
-        trigger_copy = dict(trigger)
-        delay = self._config.catalog_delay_sec
-        if delay <= 0:
-            self._catalog_executor.submit(self._run_catalog_lookup, trigger_copy)
-        else:
-            self._catalog_executor.submit(self._run_delayed_catalog_lookup, trigger_copy, delay)
+        for off in self._config.catalog_query_offsets_sec:
+            self._catalog_executor.submit(
+                self._run_delayed_catalog_lookup,
+                dict(trigger),
+                float(off),
+            )
 
     def _run_delayed_catalog_lookup(self, trigger: dict, delay: float) -> None:
         deadline = time.monotonic() + delay

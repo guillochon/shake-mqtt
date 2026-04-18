@@ -30,8 +30,11 @@ def build_match_history_entry(
     match: dict[str, object] | None,
 ) -> dict[str, Any]:
     """
-    One history row: same information as ``publish_match_result`` leaf topics
-    (snake_case keys, JSON-serializable).
+    One history row (snake_case, JSON-serializable).
+
+    Catalog fields mirror ``publish_match_result``. **sta_rms** is always taken from
+    the trigger so history tables and plots have sensor strength even when
+    ``catalog_present`` is 0 (MQTT leaf topics leave ``sta_rms`` empty in that case).
     """
     t_raw = trigger.get("time")
     ref_trigger_time: float | None
@@ -49,7 +52,10 @@ def build_match_history_entry(
     if match is None:
         entry["catalog_present"] = 0
         for key in MATCH_CATALOG_KEYS:
+            if key == "sta_rms":
+                continue
             entry[key] = None
+        entry["sta_rms"] = _json_scalar(trigger.get("sta_rms"))
         return entry
 
     entry["catalog_present"] = 1
@@ -89,6 +95,19 @@ class MatchHistoryBuffer:
         row = build_match_history_entry(trigger, match)
         now = time.time()
         with self._lock:
+            rt = row.get("ref_trigger_time")
+            ch = row.get("ref_channel")
+            if isinstance(rt, (int, float)):
+                rt_f = float(rt)
+                self._entries = [
+                    e
+                    for e in self._entries
+                    if not (
+                        isinstance(e.get("ref_trigger_time"), (int, float))
+                        and float(e["ref_trigger_time"]) == rt_f
+                        and e.get("ref_channel") == ch
+                    )
+                ]
             self._entries.append(row)
             cutoff = now - self._window_sec
             self._entries = [

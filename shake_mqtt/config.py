@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 
@@ -37,6 +38,31 @@ def _env_bool(key: str, default: bool) -> bool:
     if raw is None or raw.strip() == "":
         return default
     return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _parse_catalog_query_offsets_sec(raw: str) -> tuple[float, ...]:
+    """Comma-separated non-negative delays (seconds) from trigger until each USGS query."""
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parts:
+        raise ValueError("SHAKE_CATALOG_QUERY_OFFSETS_SEC must list at least one number")
+    out: list[float] = []
+    for p in parts:
+        v = float(p)
+        if math.isnan(v) or math.isinf(v) or v < 0:
+            raise ValueError(
+                f"SHAKE_CATALOG_QUERY_OFFSETS_SEC values must be finite and >= 0, got {p!r}"
+            )
+        out.append(v)
+    if len(out) > 12:
+        raise ValueError("SHAKE_CATALOG_QUERY_OFFSETS_SEC supports at most 12 offsets")
+    return tuple(out)
+
+
+def _catalog_query_offsets_from_env() -> tuple[float, ...]:
+    raw = os.environ.get("SHAKE_CATALOG_QUERY_OFFSETS_SEC")
+    if raw is not None and raw.strip() != "":
+        return _parse_catalog_query_offsets_sec(raw)
+    return (60.0, 120.0, 180.0)
 
 
 def _parse_channel_allowlist(raw: str) -> frozenset[str] | None:
@@ -77,7 +103,7 @@ class BridgeConfig:
     catalog_max_radius_km: float
     catalog_time_before_sec: float
     catalog_time_after_sec: float
-    catalog_delay_sec: float
+    catalog_query_offsets_sec: tuple[float, ...]
     catalog_use_traveltime: bool
     catalog_traveltime_model: str
     catalog_traveltime_timeout_sec: float
@@ -118,7 +144,7 @@ class BridgeConfig:
             catalog_max_radius_km=_env_float("SHAKE_CATALOG_MAX_RADIUS_KM", 500.0),
             catalog_time_before_sec=_env_float("SHAKE_CATALOG_TIME_BEFORE_SEC", 120.0),
             catalog_time_after_sec=_env_float("SHAKE_CATALOG_TIME_AFTER_SEC", 60.0),
-            catalog_delay_sec=_env_float("SHAKE_CATALOG_DELAY_SEC", 0.0),
+            catalog_query_offsets_sec=_catalog_query_offsets_from_env(),
             catalog_use_traveltime=_env_bool("SHAKE_CATALOG_USE_TRAVELTIME", True),
             catalog_traveltime_model=_env_str("SHAKE_CATALOG_TRAVELTIME_MODEL", "iasp91"),
             catalog_traveltime_timeout_sec=_env_float("SHAKE_CATALOG_TRAVELTIME_TIMEOUT_SEC", 6.0),
@@ -179,8 +205,8 @@ class BridgeConfig:
                 raise ValueError("SHAKE_CATALOG_LONGITUDE must be between -180 and 180")
             if self.catalog_max_radius_km <= 0:
                 raise ValueError("SHAKE_CATALOG_MAX_RADIUS_KM must be > 0")
-            if self.catalog_delay_sec < 0:
-                raise ValueError("SHAKE_CATALOG_DELAY_SEC must be >= 0")
+            if not self.catalog_query_offsets_sec:
+                raise ValueError("SHAKE_CATALOG_QUERY_OFFSETS_SEC must not be empty")
             if self.catalog_use_traveltime:
                 allowed_models = frozenset({"iasp91", "prem", "ak135"})
                 if self.catalog_traveltime_model not in allowed_models:

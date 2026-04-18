@@ -203,10 +203,9 @@ mqtt:
           - "shake"
         name: "Shake"
 
-    # Retained JSON: {"matches":[...],"updated_unix":<float>}. Each match object mirrors
-    # shake_mqtt/topic_publish.publish_match_result (kind, ref_channel, ref_trigger_time,
-    # catalog_present, magnitude, place, event_time_ms, url, sta_rms, match_mode, travel_sec,
-    # predicted_arrival_unix). List is sorted by sta_rms descending (bridge-side).
+    # Retained JSON: {"matches":[...],"updated_unix":<float>}. Catalog fields mirror
+    # publish_match_result; sta_rms is always trigger STA RMS (including catalog_present=0).
+    # List is sorted by sta_rms descending (bridge-side).
     - name: "Shake match history"
       unique_id: "shake_match_history_json"
       state_topic: "Shake/match/history_json"
