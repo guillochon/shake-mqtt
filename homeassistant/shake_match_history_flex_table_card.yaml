@@ -87,6 +87,32 @@ columns:
           : "—";
         return recent ? `<b>${v}</b>` : v;
       })()
+  - name: Dist (mi)
+    id: dist
+    data: matches
+    align: right
+    modify: |-
+      (() => {
+        const t = Number(x?.ref_trigger_time || 0);
+        const recent = t && ((Date.now() / 1000) - t <= 3600);
+        const v = (x?.distance_mi !== null && x?.distance_mi !== undefined)
+          ? Number(x.distance_mi).toFixed(0)
+          : "—";
+        return recent ? `<b>${v}</b>` : v;
+      })()
+  - name: ΔM
+    id: dmag
+    data: matches
+    align: right
+    modify: |-
+      (() => {
+        const t = Number(x?.ref_trigger_time || 0);
+        const recent = t && ((Date.now() / 1000) - t <= 3600);
+        const v = (x?.delta_magnitude !== null && x?.delta_magnitude !== undefined)
+          ? (Number(x.delta_magnitude) >= 0 ? "+" : "") + Number(x.delta_magnitude).toFixed(2)
+          : "—";
+        return recent ? `<b>${v}</b>` : v;
+      })()
   - name: Travel (s)
     id: travel
     data: matches

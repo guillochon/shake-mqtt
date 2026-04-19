@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -13,6 +14,172 @@ from datetime import UTC, datetime, timedelta
 logger = logging.getLogger(__name__)
 
 _IRIS_TRAVELTIME_BASE = "https://service.earthscope.org/irisws/traveltime/1/query"
+
+# Great-circle distance (WGS84 sphere).
+_EARTH_RADIUS_KM = 6371.0
+_KM_PER_MI = 1.609344
+
+# Log–log sensitivity: default anchors (M=2, 50 mi) and (M=4, 300 mi). An optional
+# magnitude offset shifts both anchor magnitudes together (e.g. -1 → M1 @ 50 mi).
+_SENS_ANCHOR_MAG_LOW = 2.0
+_SENS_ANCHOR_MAG_HIGH = 4.0
+_SENS_ANCHOR_MI_LOW = 50.0
+_SENS_ANCHOR_MI_HIGH = 300.0
+
+
+def sensitivity_coefficients(magnitude_offset: float) -> tuple[float, float]:
+    """
+    Return ``(a, b)`` for ``log10(D_mi) = a*M + b``.
+
+    Anchor magnitudes are ``(2 + offset)`` and ``(4 + offset)`` at 50 mi and 300 mi.
+    """
+    m_lo = _SENS_ANCHOR_MAG_LOW + magnitude_offset
+    m_hi = _SENS_ANCHOR_MAG_HIGH + magnitude_offset
+    d_mag = m_hi - m_lo
+    if d_mag == 0.0:
+        raise ValueError("Sensitivity anchor magnitude span is zero")
+    a = (math.log10(_SENS_ANCHOR_MI_HIGH) - math.log10(_SENS_ANCHOR_MI_LOW)) / d_mag
+    b = math.log10(_SENS_ANCHOR_MI_LOW) - a * m_lo
+    return a, b
+
+
+def haversine_distance_km(
+    lat1: float, lon1: float, lat2: float, lon2: float
+) -> float | None:
+    """Great-circle distance in km; ``None`` if inputs are invalid."""
+    try:
+        p1 = math.radians(lat1)
+        p2 = math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlmb = math.radians(lon2 - lon1)
+        a = (
+            math.sin(dphi / 2) ** 2
+            + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
+        )
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
+        return _EARTH_RADIUS_KM * c
+    except (TypeError, ValueError):
+        return None
+
+
+def max_distance_miles_for_magnitude(
+    magnitude: float,
+    *,
+    magnitude_offset: float = 0.0,
+) -> float:
+    """Maximum epicenter distance (mi) at which ``magnitude`` is considered detectable."""
+    a, b = sensitivity_coefficients(magnitude_offset)
+    return 10.0 ** (a * magnitude + b)
+
+
+def min_magnitude_for_distance_miles(
+    distance_mi: float,
+    *,
+    magnitude_offset: float = 0.0,
+) -> float | None:
+    """Inverse sensitivity: minimum magnitude (same curve) needed at ``distance_mi``."""
+    if distance_mi <= 0.0 or math.isnan(distance_mi) or math.isinf(distance_mi):
+        return None
+    a, b = sensitivity_coefficients(magnitude_offset)
+    return (math.log10(distance_mi) - b) / a
+
+
+def event_passes_sensitivity_heuristic(
+    m: dict,
+    sta_lat: float,
+    sta_lon: float,
+    *,
+    magnitude_offset: float = 0.0,
+) -> bool:
+    """
+    Drop candidates that are too weak for their distance.
+
+    Events with **no magnitude** are kept (USGS sometimes omits mag). If epicenter
+    coordinates are missing, the event is kept.
+    """
+    mag = m.get("magnitude")
+    if mag is None:
+        return True
+    try:
+        mag_f = float(mag)
+    except (TypeError, ValueError):
+        return True
+    ev_lat = m.get("ev_latitude")
+    ev_lon = m.get("ev_longitude")
+    if not isinstance(ev_lat, (int, float)) or not isinstance(ev_lon, (int, float)):
+        return True
+    d_km = haversine_distance_km(float(ev_lat), float(ev_lon), sta_lat, sta_lon)
+    if d_km is None:
+        return True
+    d_mi = d_km / _KM_PER_MI
+    return d_mi <= max_distance_miles_for_magnitude(
+        mag_f, magnitude_offset=magnitude_offset
+    )
+
+
+def filter_matches_by_sensitivity(
+    matches: list[dict],
+    sta_lat: float,
+    sta_lon: float,
+    *,
+    enabled: bool,
+    magnitude_offset: float = 0.0,
+) -> list[dict]:
+    """Apply :func:`event_passes_sensitivity_heuristic` to each match when ``enabled``."""
+    if not enabled:
+        return list(matches)
+    return [
+        m
+        for m in matches
+        if event_passes_sensitivity_heuristic(
+            m, sta_lat, sta_lon, magnitude_offset=magnitude_offset
+        )
+    ]
+
+
+def enrich_match_distance_and_delta(
+    sta_lat: float,
+    sta_lon: float,
+    m: dict,
+    *,
+    magnitude_offset: float = 0.0,
+) -> dict:
+    """
+    Copy ``m`` and add ``distance_mi`` and ``delta_magnitude``.
+
+    ``delta_magnitude`` is ``magnitude - M_min(distance)`` on the same log–log
+    sensitivity curve (e.g. M5 at 300 mi → about +1 because M≈4 at 300 mi).
+    Either field is ``None`` when coordinates or magnitude are unavailable.
+    """
+    row = dict(m)
+    ev_lat = m.get("ev_latitude")
+    ev_lon = m.get("ev_longitude")
+    if not isinstance(ev_lat, (int, float)) or not isinstance(ev_lon, (int, float)):
+        row["distance_mi"] = None
+        row["delta_magnitude"] = None
+        return row
+    d_km = haversine_distance_km(float(ev_lat), float(ev_lon), sta_lat, sta_lon)
+    if d_km is None:
+        row["distance_mi"] = None
+        row["delta_magnitude"] = None
+        return row
+    d_mi = d_km / _KM_PER_MI
+    row["distance_mi"] = round(d_mi, 2)
+    mag = m.get("magnitude")
+    if mag is None:
+        row["delta_magnitude"] = None
+        return row
+    try:
+        mag_f = float(mag)
+    except (TypeError, ValueError):
+        row["delta_magnitude"] = None
+        return row
+    m_min = min_magnitude_for_distance_miles(d_mi, magnitude_offset=magnitude_offset)
+    if m_min is None:
+        row["delta_magnitude"] = None
+        return row
+    row["delta_magnitude"] = round(mag_f - m_min, 3)
+    return row
 
 
 def fetch_usgs_nearby_events(
@@ -95,7 +262,9 @@ def fetch_usgs_nearby_events(
     return out
 
 
-def pick_closest_match_by_time(trigger_time_unix: float, matches: list[dict]) -> dict | None:
+def pick_closest_match_by_time(
+    trigger_time_unix: float, matches: list[dict]
+) -> dict | None:
     """USGS event whose origin time is closest to the trigger (requires ``event_time_ms``)."""
     trigger_ms = trigger_time_unix * 1000.0
     best: dict | None = None

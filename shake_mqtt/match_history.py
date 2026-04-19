@@ -11,6 +11,9 @@ from urllib.parse import urlencode
 
 from .topic_publish import MATCH_CATALOG_KEYS
 
+# Extra fields on history rows (not MQTT leaf topics under ``match/``).
+MATCH_HISTORY_EXTRA_KEYS = ("distance_mi", "delta_magnitude")
+
 
 def _json_scalar(value: object) -> Any:
     """Normalize values for JSON (mirrors empty-as-absent semantics of leaf topics)."""
@@ -63,6 +66,8 @@ def build_match_history_entry(
                 continue
             entry[key] = None
         entry["sta_rms"] = _json_scalar(trigger.get("sta_rms"))
+        for key in MATCH_HISTORY_EXTRA_KEYS:
+            entry[key] = None
         return entry
 
     entry["catalog_present"] = 1
@@ -70,6 +75,8 @@ def build_match_history_entry(
     for key in MATCH_CATALOG_KEYS:
         val = sta if key == "sta_rms" else match.get(key)
         entry[key] = _json_scalar(val)
+    for key in MATCH_HISTORY_EXTRA_KEYS:
+        entry[key] = _json_scalar(match.get(key))
     return entry
 
 

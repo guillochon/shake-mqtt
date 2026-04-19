@@ -110,6 +110,8 @@ class BridgeConfig:
     catalog_traveltime_model: str
     catalog_traveltime_timeout_sec: float
     catalog_traveltime_max_workers: int
+    catalog_sensitivity_filter_enable: bool
+    catalog_sensitivity_magnitude_offset: float
     match_history_enable: bool
     match_history_window_hours: float
     match_history_max_entries: int
@@ -161,6 +163,12 @@ class BridgeConfig:
             ),
             catalog_traveltime_max_workers=_env_int(
                 "SHAKE_CATALOG_TRAVELTIME_MAX_WORKERS", 6
+            ),
+            catalog_sensitivity_filter_enable=_env_bool(
+                "SHAKE_CATALOG_SENSITIVITY_FILTER_ENABLE", True
+            ),
+            catalog_sensitivity_magnitude_offset=_env_float(
+                "SHAKE_CATALOG_SENSITIVITY_MAGNITUDE_OFFSET", 0.0
             ),
             match_history_enable=_env_bool("SHAKE_MATCH_HISTORY_ENABLE", True),
             match_history_window_hours=_env_float(

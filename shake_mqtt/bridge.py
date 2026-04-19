@@ -9,7 +9,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .catalog import (
+    enrich_match_distance_and_delta,
     fetch_usgs_nearby_events,
+    filter_matches_by_sensitivity,
     pick_closest_catalog_match,
     trigger_time_to_iso_window,
 )
@@ -112,6 +114,13 @@ class ShakeMqttBridge:
             lon,
             self._config.catalog_max_radius_km,
         )
+        candidates = filter_matches_by_sensitivity(
+            candidates,
+            lat,
+            lon,
+            enabled=self._config.catalog_sensitivity_filter_enable,
+            magnitude_offset=self._config.catalog_sensitivity_magnitude_offset,
+        )
         closest = pick_closest_catalog_match(
             float(t),
             lat,
@@ -122,6 +131,13 @@ class ShakeMqttBridge:
             traveltime_timeout_sec=self._config.catalog_traveltime_timeout_sec,
             traveltime_max_workers=self._config.catalog_traveltime_max_workers,
         )
+        if closest is not None:
+            closest = enrich_match_distance_and_delta(
+                lat,
+                lon,
+                closest,
+                magnitude_offset=self._config.catalog_sensitivity_magnitude_offset,
+            )
         addr: Address = ("catalog", 0)
         publish_match_result(
             self._config.mqtt_topic_match(),
