@@ -13,10 +13,10 @@ Python bridge that listens for **Raspberry Shake** UDP datagrams and publishes t
 2. Build and run:
 
    ```bash
-   docker compose up -d --build
+   make up
    ```
 
-   Plain `docker compose up -d` does **not** rebuild the image; use `--build` (or `make up` in this repo) so Compose builds when the Dockerfile or `shake_mqtt/` changed. Docker still uses layer cache, so unchanged layers are skipped.
+   `make up` runs `docker compose up -d --build`, so image changes in the Dockerfile or `shake_mqtt/` are picked up. Docker still uses layer cache, so unchanged layers are skipped.
 
 3. Point your Shake’s UDP output at this machine’s IP and the port you set (`SHAKE_UDP_PORT`, default `8888`).
 
