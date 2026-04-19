@@ -45,12 +45,17 @@ class ShakeMqttBridge:
             self._match_history = MatchHistoryBuffer(
                 window_hours=config.match_history_window_hours,
                 max_entries=config.match_history_max_entries,
+                shakenet_window_base_url=config.shakenet_window_base_url,
+                shakenet_window_before_sec=config.shakenet_window_before_sec,
+                shakenet_window_after_sec=config.shakenet_window_after_sec,
             )
 
     def _on_datagram(self, data: bytes, addr: Address) -> None:
         result = self._processor.process(data, addr)
         if result.json_payload is not None:
-            self._publish_check(self._config.mqtt_topic_json(), result.json_payload, addr)
+            self._publish_check(
+                self._config.mqtt_topic_json(), result.json_payload, addr
+            )
         for ev in result.event_payloads:
             try:
                 event_obj = json.loads(ev)

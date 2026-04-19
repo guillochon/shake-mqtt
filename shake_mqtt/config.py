@@ -44,7 +44,9 @@ def _parse_catalog_query_offsets_sec(raw: str) -> tuple[float, ...]:
     """Comma-separated non-negative delays (seconds) from trigger until each USGS query."""
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     if not parts:
-        raise ValueError("SHAKE_CATALOG_QUERY_OFFSETS_SEC must list at least one number")
+        raise ValueError(
+            "SHAKE_CATALOG_QUERY_OFFSETS_SEC must list at least one number"
+        )
     out: list[float] = []
     for p in parts:
         v = float(p)
@@ -111,6 +113,9 @@ class BridgeConfig:
     match_history_enable: bool
     match_history_window_hours: float
     match_history_max_entries: int
+    shakenet_window_base_url: str
+    shakenet_window_before_sec: float
+    shakenet_window_after_sec: float
 
     @classmethod
     def from_env(cls) -> BridgeConfig:
@@ -136,7 +141,9 @@ class BridgeConfig:
             detect_ratio_off=_env_float("SHAKE_DETECT_RATIO_OFF", 2.0),
             detect_cooldown_sec=_env_float("SHAKE_DETECT_COOLDOWN_SEC", 5.0),
             detect_default_fs_hz=_env_float("SHAKE_DETECT_DEFAULT_FS_HZ", 100.0),
-            detect_channel_allowlist=_parse_channel_allowlist(_env_str("SHAKE_DETECT_CHANNELS", "")),
+            detect_channel_allowlist=_parse_channel_allowlist(
+                _env_str("SHAKE_DETECT_CHANNELS", "")
+            ),
             detect_startup_grace_sec=_env_float("SHAKE_DETECT_STARTUP_GRACE_SEC", 5.0),
             catalog_enable=_env_bool("SHAKE_CATALOG_ENABLE", False),
             catalog_latitude=_env_optional_float("SHAKE_CATALOG_LATITUDE"),
@@ -146,12 +153,30 @@ class BridgeConfig:
             catalog_time_after_sec=_env_float("SHAKE_CATALOG_TIME_AFTER_SEC", 60.0),
             catalog_query_offsets_sec=_catalog_query_offsets_from_env(),
             catalog_use_traveltime=_env_bool("SHAKE_CATALOG_USE_TRAVELTIME", True),
-            catalog_traveltime_model=_env_str("SHAKE_CATALOG_TRAVELTIME_MODEL", "iasp91"),
-            catalog_traveltime_timeout_sec=_env_float("SHAKE_CATALOG_TRAVELTIME_TIMEOUT_SEC", 6.0),
-            catalog_traveltime_max_workers=_env_int("SHAKE_CATALOG_TRAVELTIME_MAX_WORKERS", 6),
+            catalog_traveltime_model=_env_str(
+                "SHAKE_CATALOG_TRAVELTIME_MODEL", "iasp91"
+            ),
+            catalog_traveltime_timeout_sec=_env_float(
+                "SHAKE_CATALOG_TRAVELTIME_TIMEOUT_SEC", 6.0
+            ),
+            catalog_traveltime_max_workers=_env_int(
+                "SHAKE_CATALOG_TRAVELTIME_MAX_WORKERS", 6
+            ),
             match_history_enable=_env_bool("SHAKE_MATCH_HISTORY_ENABLE", True),
-            match_history_window_hours=_env_float("SHAKE_MATCH_HISTORY_WINDOW_HOURS", 24.0),
+            match_history_window_hours=_env_float(
+                "SHAKE_MATCH_HISTORY_WINDOW_HOURS", 24.0
+            ),
             match_history_max_entries=_env_int("SHAKE_MATCH_HISTORY_MAX_ENTRIES", 200),
+            shakenet_window_base_url=_env_str(
+                "SHAKE_SHAKENET_WINDOW_BASE_URL",
+                "https://quakelink.raspberryshake.org/events/query",
+            ),
+            shakenet_window_before_sec=_env_float(
+                "SHAKE_SHAKENET_WINDOW_BEFORE_SEC", 60.0
+            ),
+            shakenet_window_after_sec=_env_float(
+                "SHAKE_SHAKENET_WINDOW_AFTER_SEC", 180.0
+            ),
         )
 
     def validate(self) -> None:
@@ -175,6 +200,10 @@ class BridgeConfig:
                 "SHAKE_MATCH_HISTORY_MAX_ENTRIES must be >= 1, "
                 f"got {self.match_history_max_entries}"
             )
+        if self.shakenet_window_before_sec < 0:
+            raise ValueError("SHAKE_SHAKENET_WINDOW_BEFORE_SEC must be >= 0")
+        if self.shakenet_window_after_sec < 0:
+            raise ValueError("SHAKE_SHAKENET_WINDOW_AFTER_SEC must be >= 0")
         if self.detect_events:
             if self.detect_sta_sec <= 0:
                 raise ValueError("SHAKE_DETECT_STA_SEC must be > 0")
@@ -217,7 +246,9 @@ class BridgeConfig:
                 if self.catalog_traveltime_timeout_sec <= 0:
                     raise ValueError("SHAKE_CATALOG_TRAVELTIME_TIMEOUT_SEC must be > 0")
                 if self.catalog_traveltime_max_workers < 1:
-                    raise ValueError("SHAKE_CATALOG_TRAVELTIME_MAX_WORKERS must be >= 1")
+                    raise ValueError(
+                        "SHAKE_CATALOG_TRAVELTIME_MAX_WORKERS must be >= 1"
+                    )
 
     def mqtt_topic_json(self) -> str:
         """`MQTT_TOPIC` + `/json` (canonical JSON when parse succeeds)."""

@@ -1,69 +1,115 @@
 type: custom:flex-table-card
-title: Match history (24h, by STA RMS)
+title: Match history (7d, by STA RMS)
 strict: true
 sort_by: sta-
 max_rows: 100
 entities:
   - sensor.shake_shake_match_history
 columns:
-  # Gate row visibility:
-  # keep if catalog_present==1 OR trigger within last 5 minutes
-  - id: keep
+  # Hidden numeric age (minutes) for value-based sorting if you set sort_by: age+
+  - id: age
     hidden: true
     data: matches
     modify: >-
+      (() => {
+        const t = Number(x?.ref_trigger_time || 0);
+        if (!t) return 999999999;
+        return Math.max(0, (Date.now() / 1000 - t) / 60);
+      })()
+
+  - id: keep
+    hidden: true
+    data: matches
+    align: right
+    modify: |-
       (Number(x?.catalog_present) === 1 ||
        ((Date.now() / 1000) - Number(x?.ref_trigger_time || 0) <= 300))
       ? "keep" : null
-
   - name: Trigger
     id: trigger
     data: matches
-    modify: >-
-      x?.ref_trigger_time ? new Date(Number(x.ref_trigger_time) * 1000).toLocaleString() : "—"
-
-  - name: Time ago
-    id: ago
-    data: matches
     align: right
-    modify: >-
+    modify: |-
       (() => {
         const t = Number(x?.ref_trigger_time || 0);
+        const v = t ? new Date(t * 1000).toLocaleString() : "—";
+        const recent = t && ((Date.now() / 1000) - t <= 3600);
+        return recent ? `<b>${v}</b>` : v;
+      })()
+  - name: Time ago
+    id: ago
+    # Sort by raw trigger timestamp (numeric) while showing humanized age text.
+    # Clicking this header uses the raw value when sort_unmodified is true.
+    data: matches.ref_trigger_time
+    align: right
+    sort_unmodified: true
+    modify: |-
+      (() => {
+        const t = Number(x || 0);
         if (!t) return "—";
         const mins = Math.max(0, (Date.now() / 1000 - t) / 60);
-        if (mins < 60) return `${Math.floor(mins)}m`;
-        return `${(mins / 60).toFixed(1)}h`;
+        let v = "";
+        if (mins < 60) {
+          v = `${Math.floor(mins)}m`;
+        } else if (mins < 1440) {
+          v = `${(mins / 60).toFixed(1)}h`;
+        } else {
+          v = `${(mins / 1440).toFixed(1)}d`;
+        }
+        const recent = ((Date.now() / 1000) - t <= 3600);
+        return recent ? `<b>${v}</b>` : v;
       })()
-
   - name: STA RMS
     id: sta
     data: matches
     align: right
-    modify: >-
-      (x?.sta_rms !== null && x?.sta_rms !== undefined) ? Number(x.sta_rms).toFixed(3) : "—"
-
+    modify: |-
+      (() => {
+        const t = Number(x?.ref_trigger_time || 0);
+        const recent = t && ((Date.now() / 1000) - t <= 3600);
+        const v = (x?.sta_rms !== null && x?.sta_rms !== undefined)
+          ? Number(x.sta_rms).toFixed(3)
+          : "—";
+        const u = x?.shakenet_window_url;
+        const body = recent ? `<b>${v}</b>` : v;
+        return u ? `<a href="${u}" target="_blank" rel="noreferrer">${body}</a>` : body;
+      })()
   - name: M
     id: mag
     data: matches
     align: right
-    modify: >-
-      (x?.magnitude !== null && x?.magnitude !== undefined) ? Number(x.magnitude).toFixed(2) : "—"
-
+    modify: |-
+      (() => {
+        const t = Number(x?.ref_trigger_time || 0);
+        const recent = t && ((Date.now() / 1000) - t <= 3600);
+        const v = (x?.magnitude !== null && x?.magnitude !== undefined)
+          ? Number(x.magnitude).toFixed(2)
+          : "—";
+        return recent ? `<b>${v}</b>` : v;
+      })()
   - name: Travel (s)
     id: travel
     data: matches
     align: right
-    modify: >-
-      (x?.travel_sec !== null && x?.travel_sec !== undefined) ? Number(x.travel_sec).toFixed(2) : "—"
-
+    modify: |-
+      (() => {
+        const t = Number(x?.ref_trigger_time || 0);
+        const recent = t && ((Date.now() / 1000) - t <= 3600);
+        const v = (x?.travel_sec !== null && x?.travel_sec !== undefined)
+          ? Number(x.travel_sec).toFixed(2)
+          : "—";
+        return recent ? `<b>${v}</b>` : v;
+      })()
   - name: Place
     id: place
     data: matches
-    modify: >-
-      x?.place || "—"
-
-  - name: Link
-    id: link
-    data: matches
-    modify: >-
-      x?.url ? `<a href="${x.url}" target="_blank" rel="noreferrer">USGS</a>` : "—"
+    align: right
+    modify: |-
+      (() => {
+        const t = Number(x?.ref_trigger_time || 0);
+        const recent = t && ((Date.now() / 1000) - t <= 3600);
+        const txt = x?.place || "—";
+        const u = x?.url;
+        const body = recent ? `<b>${txt}</b>` : txt;
+        return u ? `<a href="${u}" target="_blank" rel="noreferrer">${body}</a>` : body;
+      })()
