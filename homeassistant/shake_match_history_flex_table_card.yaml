@@ -1,0 +1,69 @@
+type: custom:flex-table-card
+title: Match history (24h, by STA RMS)
+strict: true
+sort_by: sta-
+max_rows: 100
+entities:
+  - sensor.shake_shake_match_history
+columns:
+  # Gate row visibility:
+  # keep if catalog_present==1 OR trigger within last 5 minutes
+  - id: keep
+    hidden: true
+    data: matches
+    modify: >-
+      (Number(x?.catalog_present) === 1 ||
+       ((Date.now() / 1000) - Number(x?.ref_trigger_time || 0) <= 300))
+      ? "keep" : null
+
+  - name: Trigger
+    id: trigger
+    data: matches
+    modify: >-
+      x?.ref_trigger_time ? new Date(Number(x.ref_trigger_time) * 1000).toLocaleString() : "—"
+
+  - name: Time ago
+    id: ago
+    data: matches
+    align: right
+    modify: >-
+      (() => {
+        const t = Number(x?.ref_trigger_time || 0);
+        if (!t) return "—";
+        const mins = Math.max(0, (Date.now() / 1000 - t) / 60);
+        if (mins < 60) return `${Math.floor(mins)}m`;
+        return `${(mins / 60).toFixed(1)}h`;
+      })()
+
+  - name: STA RMS
+    id: sta
+    data: matches
+    align: right
+    modify: >-
+      (x?.sta_rms !== null && x?.sta_rms !== undefined) ? Number(x.sta_rms).toFixed(3) : "—"
+
+  - name: M
+    id: mag
+    data: matches
+    align: right
+    modify: >-
+      (x?.magnitude !== null && x?.magnitude !== undefined) ? Number(x.magnitude).toFixed(2) : "—"
+
+  - name: Travel (s)
+    id: travel
+    data: matches
+    align: right
+    modify: >-
+      (x?.travel_sec !== null && x?.travel_sec !== undefined) ? Number(x.travel_sec).toFixed(2) : "—"
+
+  - name: Place
+    id: place
+    data: matches
+    modify: >-
+      x?.place || "—"
+
+  - name: Link
+    id: link
+    data: matches
+    modify: >-
+      x?.url ? `<a href="${x.url}" target="_blank" rel="noreferrer">USGS</a>` : "—"

@@ -86,24 +86,14 @@ The bridge is split into small pieces so you can swap behavior without rewriting
 - **`ShakeMqttBridge`** ([shake_mqtt/bridge.py](shake_mqtt/bridge.py)) — accepts an optional `processor=` argument for dependency injection; when **`SHAKE_CATALOG_ENABLE`** is set, schedules one USGS lookup per entry in **`SHAKE_CATALOG_QUERY_OFFSETS_SEC`** (default **1, 2, and 3 minutes** after the trigger) and publishes **leaf topics** under **`{MQTT_TOPIC}/match/`** after each attempt (see `shake_mqtt/topic_publish.py`). With travel time enabled, the chosen event minimizes the gap between the trigger time and **origin time + IRIS first-arrival travel time**; **`sta_rms`** still comes from the trigger.
 - **Match history** ([shake_mqtt/match_history.py](shake_mqtt/match_history.py)) — when catalog and **`SHAKE_MATCH_HISTORY_ENABLE`** are on, each completed lookup updates **`{MQTT_TOPIC}/match/history_json`**: retained JSON `{"matches":[...],"updated_unix":...}`. Catalog fields mirror MQTT leaf topics; **`sta_rms`** is always the trigger value (so sorts and plots work when USGS returns no row, unlike **`Shake/match/sta_rms`**, which is empty then). **`matches`** is sorted by **`sta_rms`** (descending). Example MQTT sensor + Markdown dashboard table: [homeassistant/shake_event_template.yaml](homeassistant/shake_event_template.yaml) (comments) and the snippet below.
 
-**Lovelace Markdown card (table, `sensor.shake_match_history`)** — set `entity_id` so the card refreshes when the sensor updates; adjust the entity id if your MQTT topic prefix is not `Shake`.
+**Lovelace Flex Table card (table, history rows from `matches`)** — this is more robust for array attributes than Markdown loops.
 
-```yaml
-type: markdown
-title: Match history (24h window, by STA RMS)
-content: |-
-  {% set rows = state_attr('sensor.shake_match_history', 'matches') | default([], true) %}
-  | Trigger (UTC) | STA RMS | Cat | M | Place | Link |
-  |:---|---:|:---:|---:|:---|:---|
-  {% for m in rows %}
-  {% set t = m.ref_trigger_time | default(none) %}
-  {% set tstr = (t is number) and (t | timestamp_local) or '—' %}
-  {% set cp = m.catalog_present | default(0) %}
-  | {{ tstr }} | {{ m.sta_rms | default('—') }} | {{ 'yes' if cp else 'no' }} | {{ m.magnitude | default('—') }} | {{ m.place | default('—') }} | {% if m.url %}[USGS]({{ m.url }}){% else %}—{% endif %} |
-  {% endfor %}
-entity_id:
-  - sensor.shake_match_history
-```
+Use the ready-to-paste card YAML at:
+[`homeassistant/shake_match_history_flex_table_card.yaml`](homeassistant/shake_match_history_flex_table_card.yaml)
+
+Install [`custom:flex-table-card`](https://github.com/custom-cards/flex-table-card) via HACS (or manual resource) before using this card.
+
+If rows are empty, first verify the exact sensor entity id in Home Assistant (for example, `sensor.shake_shake_match_history` vs `sensor.shake_match_history`) and update the card `entities` entry accordingly.
 
 Example direction: implement `DatagramProcessor` with your own `ProcessResult` to add filters or extra MQTT topics.
 

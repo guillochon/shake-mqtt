@@ -211,7 +211,7 @@ mqtt:
       state_topic: "Shake/match/history_json"
       value_template: "{{ value_json.matches | default([]) | length }}"
       json_attributes_topic: "Shake/match/history_json"
-      json_attributes_template: "{{ {'matches': value_json.matches | default([]), 'updated_unix': value_json.updated_unix | default(0)} | to_json }}"
+      force_update: true
       icon: "mdi:table-large"
       device:
         identifiers:

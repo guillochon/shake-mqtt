@@ -17,7 +17,9 @@ def _json_scalar(value: object) -> Any:
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
-        if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+        if isinstance(value, float) and (
+            value != value or value in (float("inf"), float("-inf"))
+        ):
             return None
         return value
     if isinstance(value, str):
@@ -77,6 +79,42 @@ def _sta_rms_sort_key(entry: dict[str, Any]) -> tuple[int, float]:
         return (1, 0.0)
 
 
+def _catalog_event_key(entry: dict[str, Any]) -> tuple[str, str, str] | None:
+    """
+    Stable key for deduping catalog-present rows that refer to the same event.
+    Prefer URL, fall back to event_time_ms + place.
+    """
+    if entry.get("catalog_present") != 1:
+        return None
+    url = entry.get("url")
+    if isinstance(url, str) and url:
+        return ("url", url, "")
+    et = entry.get("event_time_ms")
+    place = entry.get("place")
+    if et is not None:
+        return ("time_place", str(et), str(place) if place is not None else "")
+    return None
+
+
+def _dedupe_catalog_rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Keep only the highest-sta_rms row for each catalog event key.
+    Unmatched rows (catalog_present != 1) are kept as-is.
+    """
+    best_by_event: dict[tuple[str, str, str], dict[str, Any]] = {}
+    out: list[dict[str, Any]] = []
+    for e in entries:
+        key = _catalog_event_key(e)
+        if key is None:
+            out.append(e)
+            continue
+        prev = best_by_event.get(key)
+        if prev is None or _sta_rms_sort_key(e) < _sta_rms_sort_key(prev):
+            best_by_event[key] = e
+    out.extend(best_by_event.values())
+    return out
+
+
 class MatchHistoryBuffer:
     """Thread-safe buffer; prune by trigger time, sort by sta_rms desc, cap length."""
 
@@ -116,6 +154,7 @@ class MatchHistoryBuffer:
                 if isinstance(e.get("ref_trigger_time"), (int, float))
                 and float(e["ref_trigger_time"]) >= cutoff
             ]
+            self._entries = _dedupe_catalog_rows(self._entries)
             self._entries.sort(key=_sta_rms_sort_key)
             if len(self._entries) > self._max_entries:
                 self._entries = self._entries[: self._max_entries]
