@@ -120,7 +120,7 @@ class StaLtaDetector:
                 st.peak_ratio = ratio
                 st.peak_sta_rms = sta_rms
                 st.peak_lta_rms = lta_rms
-                t_ev = round(st.trigger_time if st.trigger_time is not None else sample_t, 6)
+                t_ev = round(st.trigger_time, 6)
                 events.append(
                     json.dumps(
                         {
