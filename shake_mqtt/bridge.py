@@ -63,7 +63,7 @@ class ShakeMqttBridge:
                 event_obj = json.loads(ev)
             except json.JSONDecodeError:
                 continue
-            # Leaf topics under `{base}/event/` only reflect triggers so subscribers stay in sync.
+            # Leaf topics under `{base}/event/` only reflect trigger start/peak updates.
             if event_obj.get("kind") == "trigger":
                 publish_sta_lta_event(
                     self._config.mqtt_topic_event(),
@@ -76,6 +76,8 @@ class ShakeMqttBridge:
         if self._catalog_executor is None:
             return
         if trigger.get("kind") != "trigger":
+            return
+        if trigger.get("phase") == "update":
             return
         for off in self._config.catalog_query_offsets_sec:
             self._catalog_executor.submit(
