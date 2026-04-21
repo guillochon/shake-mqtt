@@ -84,6 +84,7 @@ class BridgeConfig:
     mqtt_broker_host: str
     mqtt_broker_port: int
     mqtt_topic: str
+    known_anthro_topic: str
     mqtt_client_id: str
     mqtt_username: str | None
     mqtt_password: str | None
@@ -130,6 +131,10 @@ class BridgeConfig:
             mqtt_broker_host=_env_str("MQTT_BROKER_HOST", "localhost"),
             mqtt_broker_port=_env_int("MQTT_BROKER_PORT", 1883),
             mqtt_topic=_env_str("MQTT_TOPIC", "home/seismic/shake"),
+            known_anthro_topic=_env_str(
+                "SHAKE_KNOWN_ANTHRO_TOPIC",
+                "Shake/known_anthropogenic_event",
+            ),
             mqtt_client_id=_env_str("MQTT_CLIENT_ID", "shake-bridge"),
             mqtt_username=user if user else None,
             mqtt_password=pwd if pwd else None,

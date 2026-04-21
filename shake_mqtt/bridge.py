@@ -24,6 +24,9 @@ from .udp import Address, UdpListener
 
 logger = logging.getLogger(__name__)
 _FLOAT_CMP_EPS = 1e-9
+_KNOWN_ANTHRO_TYPE_TO_SOURCE = {
+    "garage_door": "Garage Door",
+}
 
 
 class ShakeMqttBridge:
@@ -35,6 +38,7 @@ class ShakeMqttBridge:
         self._config = config
         self._processor: DatagramProcessor = processor or PassthroughJsonNormalizer()
         self._mqtt = MqttPublisher(config)
+        self._mqtt.set_message_callback(self._on_mqtt_message)
         self._udp = UdpListener(config)
         self._stop = threading.Event()
         self._catalog_executor: ThreadPoolExecutor | None = None
@@ -59,6 +63,8 @@ class ShakeMqttBridge:
         )
         self._active_trigger_peaks: dict[tuple[str, float], dict] = {}
         self._active_trigger_peaks_lock = threading.Lock()
+        self._known_anthro_window: tuple[str, float, float] | None = None
+        self._known_anthro_lock = threading.Lock()
 
     def _on_datagram(self, data: bytes, addr: Address) -> None:
         result = self._processor.process(data, addr)
@@ -89,7 +95,11 @@ class ShakeMqttBridge:
                         lambda t, p: self._publish_check(t, p, addr),
                     )
                     if self._match_history is not None:
-                        hist_json = self._match_history.record_and_dumps(event_obj, None)
+                        hist_json = self._match_history.record_and_dumps(
+                            event_obj,
+                            None,
+                            source=self._source_for_trigger(event_obj),
+                        )
                         self._publish_check(
                             self._config.mqtt_topic_match_history_json(),
                             hist_json,
@@ -178,7 +188,11 @@ class ShakeMqttBridge:
             lambda t, p: self._publish_check(t, p, addr),
         )
         if self._match_history is not None:
-            hist_json = self._match_history.record_and_dumps(trigger, closest)
+            hist_json = self._match_history.record_and_dumps(
+                trigger,
+                closest,
+                source=self._source_for_trigger(trigger),
+            )
             self._publish_check(
                 self._config.mqtt_topic_match_history_json(),
                 hist_json,
@@ -223,6 +237,64 @@ class ShakeMqttBridge:
         with self._active_trigger_peaks_lock:
             latest = self._active_trigger_peaks.get(key)
         return dict(latest) if latest is not None else dict(trigger)
+
+    def _on_mqtt_message(self, topic: str, payload: bytes) -> None:
+        if topic != self._config.known_anthro_topic:
+            return
+        try:
+            obj = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            logger.warning("Ignoring invalid known anthropogenic payload on %s", topic)
+            return
+        if not isinstance(obj, dict):
+            logger.warning(
+                "Ignoring non-object known anthropogenic payload on %s", topic
+            )
+            return
+
+        raw_type = obj.get("type")
+        if not isinstance(raw_type, str):
+            logger.warning("Ignoring known anthropogenic payload without string type")
+            return
+        event_type = raw_type.strip().lower()
+        if event_type == "none":
+            with self._known_anthro_lock:
+                self._known_anthro_window = None
+            return
+
+        source = _KNOWN_ANTHRO_TYPE_TO_SOURCE.get(event_type)
+        if source is None:
+            logger.warning("Ignoring unsupported known anthropogenic type=%s", raw_type)
+            return
+
+        duration_raw = obj.get("expected_duration")
+        if not isinstance(duration_raw, (int, float)) or float(duration_raw) < 0:
+            logger.warning(
+                "Ignoring known anthropogenic payload with invalid expected_duration"
+            )
+            return
+        duration = float(duration_raw)
+        update_time = time.time()
+        with self._known_anthro_lock:
+            self._known_anthro_window = (
+                source,
+                update_time - duration,
+                update_time + duration,
+            )
+
+    def _source_for_trigger(self, trigger: dict) -> str | None:
+        t = trigger.get("time")
+        if not isinstance(t, (int, float)):
+            return None
+        trigger_time = float(t)
+        with self._known_anthro_lock:
+            window = self._known_anthro_window
+        if window is None:
+            return None
+        source, start_time, end_time = window
+        if start_time <= trigger_time <= end_time:
+            return source
+        return None
 
     def _publish_check(
         self,

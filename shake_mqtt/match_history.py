@@ -36,6 +36,7 @@ def build_match_history_entry(
     trigger: dict[str, object],
     match: dict[str, object] | None,
     *,
+    source: str | None = None,
     shakenet_window_url: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -56,6 +57,7 @@ def build_match_history_entry(
         "kind": "match",
         "ref_channel": _json_scalar(trigger.get("channel")),
         "ref_trigger_time": ref_trigger_time,
+        "source": _json_scalar(source),
         "shakenet_window_url": _json_scalar(shakenet_window_url),
     }
     for key in MATCH_TRIGGER_KEYS:
@@ -173,11 +175,14 @@ class MatchHistoryBuffer:
         self,
         trigger: dict[str, object],
         match: dict[str, object] | None,
+        *,
+        source: str | None = None,
     ) -> str:
         """Append one match, prune, sort, cap; return retained JSON payload."""
         row = build_match_history_entry(
             trigger,
             match,
+            source=source,
             shakenet_window_url=self._build_shakenet_window_url(trigger),
         )
         now = time.time()

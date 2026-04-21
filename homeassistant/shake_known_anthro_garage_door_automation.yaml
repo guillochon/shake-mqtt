@@ -1,0 +1,29 @@
+# Home Assistant automation example:
+# Publish known anthropogenic events for garage door transitions so shake-mqtt
+# can tag nearby trigger history rows with source="Garage Door".
+#
+# Usage:
+# 1) Replace `binary_sensor.garage_door_contact` with your garage door entity.
+# 2) Merge this under `automation:` in configuration.yaml (or import as package).
+# 3) Ensure your MQTT integration is configured and the bridge uses the same broker.
+
+automation:
+  - id: shake_known_anthro_garage_door_state_change
+    alias: "Shake known anthropogenic: garage door state change"
+    description: "Publish a known human-caused event on garage door motion/state changes."
+    trigger:
+      - platform: state
+        entity_id: cover.garage_door
+        to:
+          - "opening"
+          - "open"
+          - "closing"
+          - "closed"
+    action:
+      - service: mqtt.publish
+        data:
+          topic: "Shake/known_anthropogenic_event"
+          payload: >
+            {"type":"garage_door","expected_duration":10}
+          retain: false
+    mode: single
