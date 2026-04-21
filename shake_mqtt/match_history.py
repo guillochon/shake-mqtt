@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode
 
-from .topic_publish import MATCH_CATALOG_KEYS
+from .topic_publish import MATCH_CATALOG_KEYS, MATCH_TRIGGER_KEYS
 
 # Extra fields on history rows (not MQTT leaf topics under ``match/``).
 MATCH_HISTORY_EXTRA_KEYS = ("distance_mi", "delta_magnitude")
@@ -58,14 +58,15 @@ def build_match_history_entry(
         "ref_trigger_time": ref_trigger_time,
         "shakenet_window_url": _json_scalar(shakenet_window_url),
     }
+    for key in MATCH_TRIGGER_KEYS:
+        entry[key] = _json_scalar(trigger.get(key))
 
     if match is None:
         entry["catalog_present"] = 0
         for key in MATCH_CATALOG_KEYS:
-            if key == "sta_rms":
+            if key in MATCH_TRIGGER_KEYS:
                 continue
             entry[key] = None
-        entry["sta_rms"] = _json_scalar(trigger.get("sta_rms"))
         for key in MATCH_HISTORY_EXTRA_KEYS:
             entry[key] = None
         return entry

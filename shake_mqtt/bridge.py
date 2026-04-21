@@ -70,6 +70,21 @@ class ShakeMqttBridge:
                     event_obj,
                     lambda t, p: self._publish_check(t, p, addr),
                 )
+                if self._config.catalog_enable:
+                    publish_match_result(
+                        self._config.mqtt_topic_match(),
+                        event_obj,
+                        None,
+                        lambda t, p: self._publish_check(t, p, addr),
+                    )
+                    if self._match_history is not None:
+                        hist_json = self._match_history.record_and_dumps(event_obj, None)
+                        self._publish_check(
+                            self._config.mqtt_topic_match_history_json(),
+                            hist_json,
+                            addr,
+                            retain=True,
+                        )
             self._maybe_schedule_catalog(event_obj)
 
     def _maybe_schedule_catalog(self, trigger: dict) -> None:
