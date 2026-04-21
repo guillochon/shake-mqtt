@@ -23,6 +23,7 @@ from .topic_publish import publish_match_result, publish_sta_lta_event
 from .udp import Address, UdpListener
 
 logger = logging.getLogger(__name__)
+_FLOAT_CMP_EPS = 1e-9
 
 
 class ShakeMqttBridge:
@@ -120,7 +121,7 @@ class ShakeMqttBridge:
             if self._stop.wait(timeout=min(remaining, 1.0)):
                 return
         self._run_catalog_lookup(trigger)
-        if delay + 1e-9 >= self._catalog_max_query_offset_sec:
+        if delay + _FLOAT_CMP_EPS >= self._catalog_max_query_offset_sec:
             self._forget_trigger_peak(trigger)
 
     def _run_catalog_lookup(self, trigger: dict) -> None:
