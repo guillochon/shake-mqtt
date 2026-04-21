@@ -51,6 +51,8 @@ class ShakeMqttBridge:
                 shakenet_window_before_sec=config.shakenet_window_before_sec,
                 shakenet_window_after_sec=config.shakenet_window_after_sec,
             )
+        self._active_trigger_peaks: dict[tuple[str, float], dict] = {}
+        self._active_trigger_peaks_lock = threading.Lock()
 
     def _on_datagram(self, data: bytes, addr: Address) -> None:
         result = self._processor.process(data, addr)
@@ -63,8 +65,13 @@ class ShakeMqttBridge:
                 event_obj = json.loads(ev)
             except json.JSONDecodeError:
                 continue
+            kind = event_obj.get("kind")
+            if kind == "trigger":
+                self._remember_trigger_peak(event_obj)
+            elif kind == "reset":
+                self._forget_channel_trigger_peaks(event_obj)
             # Leaf topics under `{base}/event/` only reflect trigger start/peak updates.
-            if event_obj.get("kind") == "trigger":
+            if kind == "trigger":
                 publish_sta_lta_event(
                     self._config.mqtt_topic_event(),
                     event_obj,
@@ -112,6 +119,7 @@ class ShakeMqttBridge:
         self._run_catalog_lookup(trigger)
 
     def _run_catalog_lookup(self, trigger: dict) -> None:
+        trigger = self._latest_trigger_for_lookup(trigger)
         lat = self._config.catalog_latitude
         lon = self._config.catalog_longitude
         if lat is None or lon is None:
@@ -176,6 +184,40 @@ class ShakeMqttBridge:
                 t,
                 closest.get("match_mode"),
             )
+
+    @staticmethod
+    def _trigger_key(trigger: dict) -> tuple[str, float] | None:
+        ch = trigger.get("channel")
+        t = trigger.get("time")
+        if not isinstance(ch, str):
+            return None
+        if not isinstance(t, (int, float)):
+            return None
+        return (ch, float(t))
+
+    def _remember_trigger_peak(self, trigger: dict) -> None:
+        key = self._trigger_key(trigger)
+        if key is None:
+            return
+        with self._active_trigger_peaks_lock:
+            self._active_trigger_peaks[key] = dict(trigger)
+
+    def _forget_channel_trigger_peaks(self, reset_event: dict) -> None:
+        ch = reset_event.get("channel")
+        if not isinstance(ch, str):
+            return
+        with self._active_trigger_peaks_lock:
+            self._active_trigger_peaks = {
+                key: ev for key, ev in self._active_trigger_peaks.items() if key[0] != ch
+            }
+
+    def _latest_trigger_for_lookup(self, trigger: dict) -> dict:
+        key = self._trigger_key(trigger)
+        if key is None:
+            return dict(trigger)
+        with self._active_trigger_peaks_lock:
+            latest = self._active_trigger_peaks.get(key)
+        return dict(latest) if latest is not None else dict(trigger)
 
     def _publish_check(
         self,
