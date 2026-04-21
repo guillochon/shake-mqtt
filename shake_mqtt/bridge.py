@@ -121,6 +121,7 @@ class ShakeMqttBridge:
             if self._stop.wait(timeout=min(remaining, 1.0)):
                 return
         self._run_catalog_lookup(trigger)
+        # Small epsilon avoids missing cleanup when `delay` differs by tiny FP noise.
         if delay + _FLOAT_CMP_EPS >= self._catalog_max_query_offset_sec:
             self._forget_trigger_peak(trigger)
 
