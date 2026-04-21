@@ -207,9 +207,9 @@ class ShakeMqttBridge:
         if not isinstance(ch, str):
             return
         with self._active_trigger_peaks_lock:
-            self._active_trigger_peaks = {
-                key: ev for key, ev in self._active_trigger_peaks.items() if key[0] != ch
-            }
+            stale_keys = [key for key in self._active_trigger_peaks if key[0] == ch]
+            for key in stale_keys:
+                del self._active_trigger_peaks[key]
 
     def _latest_trigger_for_lookup(self, trigger: dict) -> dict:
         key = self._trigger_key(trigger)
