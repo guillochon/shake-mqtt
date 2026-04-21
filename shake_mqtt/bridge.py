@@ -23,6 +23,7 @@ from .topic_publish import publish_match_result, publish_sta_lta_event
 from .udp import Address, UdpListener
 
 logger = logging.getLogger(__name__)
+_FLOAT_CMP_EPS = 1e-9
 
 
 class ShakeMqttBridge:
@@ -51,6 +52,13 @@ class ShakeMqttBridge:
                 shakenet_window_before_sec=config.shakenet_window_before_sec,
                 shakenet_window_after_sec=config.shakenet_window_after_sec,
             )
+        self._catalog_max_query_offset_sec = (
+            max(config.catalog_query_offsets_sec)
+            if config.catalog_query_offsets_sec
+            else 0.0
+        )
+        self._active_trigger_peaks: dict[tuple[str, float], dict] = {}
+        self._active_trigger_peaks_lock = threading.Lock()
 
     def _on_datagram(self, data: bytes, addr: Address) -> None:
         result = self._processor.process(data, addr)
@@ -63,19 +71,39 @@ class ShakeMqttBridge:
                 event_obj = json.loads(ev)
             except json.JSONDecodeError:
                 continue
-            # Leaf topics under `{base}/event/` only reflect triggers so subscribers stay in sync.
-            if event_obj.get("kind") == "trigger":
+            kind = event_obj.get("kind")
+            if kind == "trigger":
+                self._remember_trigger_peak(event_obj)
+            # Leaf topics under `{base}/event/` only reflect trigger start/peak updates.
+            if kind == "trigger":
                 publish_sta_lta_event(
                     self._config.mqtt_topic_event(),
                     event_obj,
                     lambda t, p: self._publish_check(t, p, addr),
                 )
+                if self._config.catalog_enable:
+                    publish_match_result(
+                        self._config.mqtt_topic_match(),
+                        event_obj,
+                        None,
+                        lambda t, p: self._publish_check(t, p, addr),
+                    )
+                    if self._match_history is not None:
+                        hist_json = self._match_history.record_and_dumps(event_obj, None)
+                        self._publish_check(
+                            self._config.mqtt_topic_match_history_json(),
+                            hist_json,
+                            addr,
+                            retain=True,
+                        )
             self._maybe_schedule_catalog(event_obj)
 
     def _maybe_schedule_catalog(self, trigger: dict) -> None:
         if self._catalog_executor is None:
             return
         if trigger.get("kind") != "trigger":
+            return
+        if trigger.get("phase") == "update":
             return
         for off in self._config.catalog_query_offsets_sec:
             self._catalog_executor.submit(
@@ -93,8 +121,12 @@ class ShakeMqttBridge:
             if self._stop.wait(timeout=min(remaining, 1.0)):
                 return
         self._run_catalog_lookup(trigger)
+        # Small epsilon avoids missing cleanup when `delay` differs by tiny FP noise.
+        if delay + _FLOAT_CMP_EPS >= self._catalog_max_query_offset_sec:
+            self._forget_trigger_peak(trigger)
 
     def _run_catalog_lookup(self, trigger: dict) -> None:
+        trigger = self._latest_trigger_for_lookup(trigger)
         lat = self._config.catalog_latitude
         lon = self._config.catalog_longitude
         if lat is None or lon is None:
@@ -159,6 +191,38 @@ class ShakeMqttBridge:
                 t,
                 closest.get("match_mode"),
             )
+
+    @staticmethod
+    def _trigger_key(trigger: dict) -> tuple[str, float] | None:
+        ch = trigger.get("channel")
+        t = trigger.get("time")
+        if not isinstance(ch, str):
+            return None
+        if not isinstance(t, (int, float)):
+            return None
+        return (ch, float(t))
+
+    def _remember_trigger_peak(self, trigger: dict) -> None:
+        key = self._trigger_key(trigger)
+        if key is None:
+            return
+        with self._active_trigger_peaks_lock:
+            self._active_trigger_peaks[key] = dict(trigger)
+
+    def _forget_trigger_peak(self, trigger: dict) -> None:
+        key = self._trigger_key(trigger)
+        if key is None:
+            return
+        with self._active_trigger_peaks_lock:
+            self._active_trigger_peaks.pop(key, None)
+
+    def _latest_trigger_for_lookup(self, trigger: dict) -> dict:
+        key = self._trigger_key(trigger)
+        if key is None:
+            return dict(trigger)
+        with self._active_trigger_peaks_lock:
+            latest = self._active_trigger_peaks.get(key)
+        return dict(latest) if latest is not None else dict(trigger)
 
     def _publish_check(
         self,

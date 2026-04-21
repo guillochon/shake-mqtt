@@ -24,6 +24,10 @@ class _ChannelState:
     lta_sq: float = 0.0
     initialized: bool = False
     triggered: bool = False
+    trigger_time: float | None = None
+    peak_ratio: float = 0.0
+    peak_sta_rms: float = 0.0
+    peak_lta_rms: float = 0.0
     cooldown_until_mono: float = 0.0
 
 
@@ -80,10 +84,14 @@ class StaLtaDetector:
                 armed = (now_mono - self._started_mono) >= self.config.detect_startup_grace_sec
                 if ratio >= on and now_mono >= st.cooldown_until_mono and armed:
                     st.triggered = True
-                    t_ev = round(sample_t, 6)
-                    r_ev = round(ratio, 4)
-                    sr_ev = round(sta_rms, 4)
-                    lr_ev = round(lta_rms, 4)
+                    st.trigger_time = sample_t
+                    st.peak_ratio = ratio
+                    st.peak_sta_rms = sta_rms
+                    st.peak_lta_rms = lta_rms
+                    t_ev = round(st.trigger_time, 6)
+                    r_ev = round(st.peak_ratio, 4)
+                    sr_ev = round(st.peak_sta_rms, 4)
+                    lr_ev = round(st.peak_lta_rms, 4)
                     logger.info(
                         "STA/LTA trigger channel=%s time=%s ratio=%s sta_rms=%s lta_rms=%s",
                         channel,
@@ -96,6 +104,7 @@ class StaLtaDetector:
                         json.dumps(
                             {
                                 "kind": "trigger",
+                                "phase": "start",
                                 "channel": channel,
                                 "time": t_ev,
                                 "ratio": r_ev,
@@ -106,8 +115,33 @@ class StaLtaDetector:
                             ensure_ascii=False,
                         )
                     )
+                continue
+            if ratio > st.peak_ratio:
+                st.peak_ratio = ratio
+                st.peak_sta_rms = sta_rms
+                st.peak_lta_rms = lta_rms
+                t_ev = round(st.trigger_time, 6)
+                events.append(
+                    json.dumps(
+                        {
+                            "kind": "trigger",
+                            "phase": "update",
+                            "channel": channel,
+                            "time": t_ev,
+                            "ratio": round(st.peak_ratio, 4),
+                            "sta_rms": round(st.peak_sta_rms, 4),
+                            "lta_rms": round(st.peak_lta_rms, 4),
+                        },
+                        separators=_JSON_SEPARATORS,
+                        ensure_ascii=False,
+                    )
+                )
             elif ratio <= off:
                 st.triggered = False
+                st.trigger_time = None
+                st.peak_ratio = 0.0
+                st.peak_sta_rms = 0.0
+                st.peak_lta_rms = 0.0
                 st.cooldown_until_mono = now_mono + max(0.0, self.config.detect_cooldown_sec)
                 events.append(
                     json.dumps(
