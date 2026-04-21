@@ -51,6 +51,11 @@ class ShakeMqttBridge:
                 shakenet_window_before_sec=config.shakenet_window_before_sec,
                 shakenet_window_after_sec=config.shakenet_window_after_sec,
             )
+        self._catalog_max_query_offset_sec = (
+            max(config.catalog_query_offsets_sec)
+            if config.catalog_query_offsets_sec
+            else 0.0
+        )
         self._active_trigger_peaks: dict[tuple[str, float], dict] = {}
         self._active_trigger_peaks_lock = threading.Lock()
 
@@ -68,8 +73,6 @@ class ShakeMqttBridge:
             kind = event_obj.get("kind")
             if kind == "trigger":
                 self._remember_trigger_peak(event_obj)
-            elif kind == "reset":
-                self._forget_channel_trigger_peaks(event_obj)
             # Leaf topics under `{base}/event/` only reflect trigger start/peak updates.
             if kind == "trigger":
                 publish_sta_lta_event(
@@ -117,6 +120,8 @@ class ShakeMqttBridge:
             if self._stop.wait(timeout=min(remaining, 1.0)):
                 return
         self._run_catalog_lookup(trigger)
+        if delay + 1e-9 >= self._catalog_max_query_offset_sec:
+            self._forget_trigger_peak(trigger)
 
     def _run_catalog_lookup(self, trigger: dict) -> None:
         trigger = self._latest_trigger_for_lookup(trigger)
@@ -202,14 +207,12 @@ class ShakeMqttBridge:
         with self._active_trigger_peaks_lock:
             self._active_trigger_peaks[key] = dict(trigger)
 
-    def _forget_channel_trigger_peaks(self, reset_event: dict) -> None:
-        ch = reset_event.get("channel")
-        if not isinstance(ch, str):
+    def _forget_trigger_peak(self, trigger: dict) -> None:
+        key = self._trigger_key(trigger)
+        if key is None:
             return
         with self._active_trigger_peaks_lock:
-            stale_keys = [key for key in self._active_trigger_peaks if key[0] == ch]
-            for key in stale_keys:
-                del self._active_trigger_peaks[key]
+            self._active_trigger_peaks.pop(key, None)
 
     def _latest_trigger_for_lookup(self, trigger: dict) -> dict:
         key = self._trigger_key(trigger)
