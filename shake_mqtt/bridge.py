@@ -115,6 +115,10 @@ class ShakeMqttBridge:
             return
         if trigger.get("phase") == "update":
             return
+        # Known anthropogenic triggers are intentionally excluded from
+        # external catalog lookups.
+        if self._source_for_trigger(trigger) is not None:
+            return
         for off in self._config.catalog_query_offsets_sec:
             self._catalog_executor.submit(
                 self._run_delayed_catalog_lookup,
@@ -137,6 +141,10 @@ class ShakeMqttBridge:
 
     def _run_catalog_lookup(self, trigger: dict) -> None:
         trigger = self._latest_trigger_for_lookup(trigger)
+        # Re-check at execution time so delayed jobs are skipped if an
+        # anthropogenic window is published after scheduling.
+        if self._source_for_trigger(trigger) is not None:
+            return
         lat = self._config.catalog_latitude
         lon = self._config.catalog_longitude
         if lat is None or lon is None:

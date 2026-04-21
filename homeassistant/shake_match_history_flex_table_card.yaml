@@ -74,6 +74,30 @@ columns:
         const body = recent ? `<b>${v}</b>` : v;
         return u ? `<a href="${u}" target="_blank" rel="noreferrer">${body}</a>` : body;
       })()
+  - name: Source
+    id: source
+    data: matches
+    align: right
+    modify: |-
+      (() => {
+        const t = Number(x?.ref_trigger_time || 0);
+        const recent = t && ((Date.now() / 1000) - t <= 3600);
+        const v = x?.source || "—";
+        return recent ? `<b>${v}</b>` : v;
+      })()
+  - name: Max ratio
+    id: ratio
+    data: matches
+    align: right
+    modify: |-
+      (() => {
+        const t = Number(x?.ref_trigger_time || 0);
+        const recent = t && ((Date.now() / 1000) - t <= 3600);
+        const v = (x?.ratio !== null && x?.ratio !== undefined)
+          ? Number(x.ratio).toFixed(2)
+          : "—";
+        return recent ? `<b>${v}</b>` : v;
+      })()
   - name: M
     id: mag
     data: matches
