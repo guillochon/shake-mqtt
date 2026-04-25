@@ -24,8 +24,13 @@ from .udp import Address, UdpListener
 
 logger = logging.getLogger(__name__)
 _FLOAT_CMP_EPS = 1e-9
+_MATCH_HISTORY_HYDRATE_TIMEOUT_SEC = 2.0
 _KNOWN_ANTHRO_TYPE_TO_SOURCE = {
     "garage_door": "Garage Door",
+}
+_USGS_EVENT_TYPE_TO_SOURCE = {
+    "earthquake": "quake",
+    "quarry blast": "quarry",
 }
 
 
@@ -199,7 +204,7 @@ class ShakeMqttBridge:
             hist_json = self._match_history.record_and_dumps(
                 trigger,
                 closest,
-                source=self._source_for_trigger(trigger),
+                source=self._history_source_for_match(trigger, closest),
             )
             self._publish_check(
                 self._config.mqtt_topic_match_history_json(),
@@ -304,6 +309,35 @@ class ShakeMqttBridge:
             return source
         return None
 
+    def _history_source_for_match(
+        self, trigger: dict, match: dict | None
+    ) -> str | None:
+        if match is not None:
+            raw_event_type = match.get("usgs_event_type")
+            if isinstance(raw_event_type, str):
+                mapped = _USGS_EVENT_TYPE_TO_SOURCE.get(raw_event_type.strip().lower())
+                if mapped is not None:
+                    return mapped
+        return self._source_for_trigger(trigger)
+
+    def _hydrate_match_history_from_mqtt(self) -> None:
+        hist = self._match_history
+        if hist is None:
+            return
+        topic = self._config.mqtt_topic_match_history_json()
+        payload = self._mqtt.wait_for_retained(
+            topic, _MATCH_HISTORY_HYDRATE_TIMEOUT_SEC
+        )
+        if payload is None:
+            logger.info("No retained match history found on %s", topic)
+            return
+        try:
+            count = hist.load_from_json(payload)
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            logger.warning("Ignoring invalid retained match history on %s", topic)
+            return
+        logger.info("Hydrated %d match-history rows from %s", count, topic)
+
     def _publish_check(
         self,
         topic: str,
@@ -327,6 +361,7 @@ class ShakeMqttBridge:
     def run(self) -> None:
         self._mqtt.connect()
         try:
+            self._hydrate_match_history_from_mqtt()
             self._udp.bind()
             self._udp.run_forever(self._on_datagram, self._stop)
         finally:

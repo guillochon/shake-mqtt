@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import ssl
+import threading
 from collections.abc import Callable
 
 from paho.mqtt.client import CallbackAPIVersion, Client, MQTTMessage, MQTTMessageInfo
@@ -17,6 +18,8 @@ class MqttPublisher:
     def __init__(self, config: BridgeConfig) -> None:
         self._config = config
         self._on_message_cb: Callable[[str, bytes], None] | None = None
+        self._retained_waiters: dict[str, tuple[threading.Event, bytes | None]] = {}
+        self._retained_waiters_lock = threading.Lock()
         self._client = Client(
             CallbackAPIVersion.VERSION2,
             client_id=config.mqtt_client_id,
@@ -60,6 +63,13 @@ class MqttPublisher:
             logger.warning("MQTT disconnect: %s", reason_code)
 
     def _on_message(self, client, userdata, message: MQTTMessage) -> None:
+        if message.retain:
+            with self._retained_waiters_lock:
+                waiter = self._retained_waiters.get(message.topic)
+                if waiter is not None:
+                    ev, _payload = waiter
+                    self._retained_waiters[message.topic] = (ev, bytes(message.payload))
+                    ev.set()
         cb = self._on_message_cb
         if cb is None:
             return
@@ -92,3 +102,29 @@ class MqttPublisher:
         self, topic: str, payload: str, *, retain: bool = False
     ) -> MQTTMessageInfo:
         return self._client.publish(topic, payload, qos=0, retain=retain)
+
+    def wait_for_retained(self, topic: str, timeout_sec: float) -> bytes | None:
+        """
+        Subscribe to a topic and wait for a retained payload.
+
+        Returns payload bytes when retained data is received, otherwise ``None``.
+        """
+        ev = threading.Event()
+        with self._retained_waiters_lock:
+            self._retained_waiters[topic] = (ev, None)
+        result, _mid = self._client.subscribe(topic, qos=0)
+        if result != 0:
+            with self._retained_waiters_lock:
+                self._retained_waiters.pop(topic, None)
+            logger.warning("MQTT subscribe failed topic=%s rc=%s", topic, result)
+            return None
+        try:
+            if not ev.wait(timeout=max(0.0, float(timeout_sec))):
+                return None
+            with self._retained_waiters_lock:
+                _ev, payload = self._retained_waiters.get(topic, (ev, None))
+            return payload
+        finally:
+            with self._retained_waiters_lock:
+                self._retained_waiters.pop(topic, None)
+            self._client.unsubscribe(topic)

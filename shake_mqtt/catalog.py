@@ -234,6 +234,7 @@ def fetch_usgs_nearby_events(
         place = props.get("place")
         et = props.get("time")
         detail = props.get("url")
+        event_type = props.get("type")
         ev_lat: float | None = None
         ev_lon: float | None = None
         ev_depth_km: float | None = None
@@ -254,6 +255,9 @@ def fetch_usgs_nearby_events(
                 "place": str(place) if place is not None else None,
                 "event_time_ms": int(et) if et is not None else None,
                 "url": str(detail) if detail is not None else None,
+                "usgs_event_type": (
+                    str(event_type).strip().lower() if event_type is not None else None
+                ),
                 "ev_latitude": ev_lat,
                 "ev_longitude": ev_lon,
                 "ev_depth_km": ev_depth_km,

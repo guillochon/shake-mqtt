@@ -150,6 +150,42 @@ class MatchHistoryBuffer:
         self._entries: list[dict[str, Any]] = []
         self._lock = threading.Lock()
 
+    def _prune_sort_cap(self, *, now: float) -> None:
+        cutoff = now - self._window_sec
+        self._entries = [
+            e
+            for e in self._entries
+            if isinstance(e.get("ref_trigger_time"), (int, float))
+            and float(e["ref_trigger_time"]) >= cutoff
+        ]
+        self._entries = _dedupe_catalog_rows(self._entries)
+        self._entries.sort(key=_sta_rms_sort_key)
+        if len(self._entries) > self._max_entries:
+            self._entries = self._entries[: self._max_entries]
+
+    def load_from_json(self, payload: bytes | str) -> int:
+        """
+        Replace in-memory history from a retained JSON payload.
+
+        Returns number of rows retained after prune/dedupe/sort/cap.
+        """
+        if isinstance(payload, bytes):
+            text = payload.decode("utf-8")
+        else:
+            text = payload
+        obj = json.loads(text)
+        if not isinstance(obj, dict):
+            raise ValueError("history payload must be a JSON object")
+        rows = obj.get("matches")
+        if not isinstance(rows, list):
+            raise ValueError("history payload missing list field: matches")
+        parsed: list[dict[str, Any]] = [r for r in rows if isinstance(r, dict)]
+        now = time.time()
+        with self._lock:
+            self._entries = parsed
+            self._prune_sort_cap(now=now)
+            return len(self._entries)
+
     def _build_shakenet_window_url(self, trigger: dict[str, object]) -> str | None:
         t_raw = trigger.get("time")
         if not isinstance(t_raw, (int, float)):
@@ -201,17 +237,7 @@ class MatchHistoryBuffer:
                     )
                 ]
             self._entries.append(row)
-            cutoff = now - self._window_sec
-            self._entries = [
-                e
-                for e in self._entries
-                if isinstance(e.get("ref_trigger_time"), (int, float))
-                and float(e["ref_trigger_time"]) >= cutoff
-            ]
-            self._entries = _dedupe_catalog_rows(self._entries)
-            self._entries.sort(key=_sta_rms_sort_key)
-            if len(self._entries) > self._max_entries:
-                self._entries = self._entries[: self._max_entries]
+            self._prune_sort_cap(now=now)
             payload = {
                 "matches": list(self._entries),
                 "updated_unix": round(now, 3),
